@@ -93,7 +93,7 @@ pub fn listing() -> Listing {
     geo.status = Status::Modified;
     geo.dirty = Some(3);
     let mut ritz_get_gui = behind(
-        "Helpers", "ritz-get-gui", "ritz-get GUI", "This window: browse, install and update Ritze03's programs",
+        "Helpers", "ritz-get-gui", "ritz-get GUI", "Graphical frontend for ritz-get",
         "2026-10-19 5e7a2c1", "2026-10-22 d40f9b8", On,
     );
     ritz_get_gui.source = Some("Ritze03/ritz-get-gui".into());
