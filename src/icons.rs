@@ -411,6 +411,7 @@ mod tests {
             desc: String::new(),
             shortcut: ShortcutState::None,
             setup: vec![],
+            data: vec![],
         }
     }
 

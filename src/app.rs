@@ -73,6 +73,8 @@ pub enum Verb {
     Reset,
     /// Only the progress dialog (a removal has no card bar).
     Remove,
+    /// `delete-data NAME`: only the progress dialog, like `Remove`.
+    DeleteData,
 }
 
 impl Verb {
@@ -85,6 +87,7 @@ impl Verb {
             Verb::Switch => "Switching\u{2026}",
             Verb::Reset => "Resetting\u{2026}",
             Verb::Remove => "Removing\u{2026}",
+            Verb::DeleteData => "Deleting data of\u{2026}",
         }
     }
 
@@ -102,6 +105,7 @@ impl Verb {
             Verb::Switch => "Switched",
             Verb::Reset => "Reset",
             Verb::Remove => "Removed",
+            Verb::DeleteData => "Deleted data of",
         }
     }
 
@@ -114,6 +118,7 @@ impl Verb {
             Verb::Switch => "switch",
             Verb::Reset => "reset",
             Verb::Remove => "remove",
+            Verb::DeleteData => "delete data of",
         }
     }
 }
@@ -174,7 +179,7 @@ impl Run {
 
 /// Commands that open the progress dialog.
 pub fn opens_run(c: &Command) -> bool {
-    matches!(c, Command::Install { .. } | Command::Update { .. } | Command::Switch { .. } | Command::Reset { .. } | Command::Remove { .. })
+    matches!(c, Command::Install { .. } | Command::Update { .. } | Command::Switch { .. } | Command::Reset { .. } | Command::Remove { .. } | Command::DeleteData { .. })
 }
 
 /// Where one card is in the running command. There is no percentage (the CLI prints none): a card
@@ -538,6 +543,7 @@ impl AppState {
             Command::Switch { .. } => Verb::Switch,
             Command::Reset { .. } => Verb::Reset,
             Command::Remove { .. } => Verb::Remove,
+            Command::DeleteData { .. } => Verb::DeleteData,
             _ => Verb::Update,
         }
     }
@@ -831,7 +837,8 @@ impl AppState {
     }
 
     /// Apply the D57 screenshot spec (`RITZ_GET_GUI_SHOT`): `default`, `select=<section/name>`,
-    /// `menu=<section/name>`, `settings`, `reset=<section/name>`, `deps=<section/name>`, `busy`,
+    /// `menu=<section/name>`, `dataleft=<section/name>` (selects it; the side panel shows its data folders),
+    /// `deletedata=<section/name>` (selects it and opens the delete-data confirmation), `settings`, `reset=<section/name>`, `deps=<section/name>`, `busy`,
     /// `restart`, `refused`, `progress` (a frozen mid-way Update all: per-card bars, busy), `progress-single=<section/name>` (that card installing / updating); `startmenu=<section/name>` (the D47 "Add to the start menu?" modal, that entry shown as freshly installed); `busy` is a single `update ts6tray` running (its card Running), `remove=<section/name>` (selects it, then the app itself runs `ritz-get remove`); plus `setupneeded=<section/name>` (exit-4 badge on that entry) and (I14) `deps-none=<section/name>` (Deps modal without a `deps:`
     /// command), `needs` (several NEEDS / SETUP NEEDED badges), `logerr` (a log with FAILED / busy
     /// lines) and `empty` (a search that matches nothing). Sets initial UI state only; `default` and
@@ -848,6 +855,17 @@ impl AppState {
                 self.selected = Some(id());
                 self.scroll_to_side = true;
                 self.scroll_to_card = true;
+            }
+            "dataleft" => {
+                self.selected = Some(id());
+                self.scroll_to_side = true;
+                self.scroll_to_card = true;
+            }
+            "deletedata" => {
+                self.selected = Some(id());
+                self.scroll_to_side = true;
+                self.scroll_to_card = true;
+                self.modal = Some(Modal::DeleteData { id: id() });
             }
             "menu" => {
                 self.selected = Some(id());
@@ -1311,6 +1329,11 @@ fn is_updated_line(l: &str) -> bool {
     l.split_once(": updated ").is_some_and(|(_, rest)| rest.contains("->") || rest.contains('\u{2192}'))
 }
 
+/// `NAME: data deleted` / `NAME: no data left` / `NAME: a website has no data` (the `delete-data` results).
+fn is_delete_data_line(l: &str) -> bool {
+    l.split_once(": ").is_some_and(|(_, rest)| matches!(rest.trim(), "data deleted" | "no data left" | "a website has no data"))
+}
+
 /// Log colour of one streamed line (keep it simple, D32): FAILED / errors red, `NAME: updated`
 /// and shortcut results green, `needs root:` / `deps:` / "Additional steps" accent, rest plain.
 fn classify(line: &str) -> LogKind {
@@ -1325,7 +1348,11 @@ fn classify(line: &str) -> LogKind {
         LogKind::Err
     } else if lower.starts_with("needs root:") || lower.starts_with("deps:") || l.starts_with("Additional steps") {
         LogKind::Note
-    } else if is_updated_line(l) || l.contains("shortcut created") || l.contains("shortcut removed") {
+    } else if is_updated_line(l)
+        || l.contains("shortcut created")
+        || l.contains("shortcut removed")
+        || is_delete_data_line(l)
+    {
         LogKind::Ok
     } else {
         LogKind::Info
@@ -1385,6 +1412,9 @@ pub struct App {
     config_path: Option<PathBuf>,
     /// `~/.cache/ritz-get/last-run`; `None` = do not read (tests).
     last_run_path: Option<PathBuf>,
+    /// An old ritz-get answered `list --data` with exit 2: every list from now on goes without `--data`
+    /// (session-long; the data folders then simply do not show).
+    no_data_flag: bool,
     /// Binary to run instead of `$RITZ_GET` (tests drive the real runner against the fake CLI through this).
     bin: Option<String>,
 }
@@ -1420,8 +1450,14 @@ impl App {
             parse: porcelain::parse,
             config_path: None,
             last_run_path: None,
+            no_data_flag: false,
             bin: None,
         }
+    }
+
+    /// The `list --porcelain` the app asks for: with `--data` unless an old ritz-get refused it.
+    fn list_cmd(&self, offline: bool) -> Command {
+        Command::List { offline, all: false, data: !self.no_data_flag }
     }
 
     /// Sort (D43) and last-run (D58) from disk.
@@ -1446,8 +1482,8 @@ impl App {
         self.state.ritz_get_missing = false;
         self.state.refused = None;
         self.queue.push_back(Command::Dir { path: None });
-        self.queue.push_back(Command::List { offline: true, all: false });
-        self.queue.push_back(Command::List { offline: false, all: false });
+        self.queue.push_back(self.list_cmd(true));
+        self.queue.push_back(self.list_cmd(false));
         self.queue.push_back(Command::Shortcuts { path: None });
         self.sync_loading();
     }
@@ -1461,7 +1497,10 @@ impl App {
     }
 
     /// Queue a command (identical queued queries are not duplicated).
-    fn enqueue(&mut self, cmd: Command) {
+    fn enqueue(&mut self, mut cmd: Command) {
+        if let Command::List { data, .. } = &mut cmd {
+            *data &= !self.no_data_flag;
+        }
         if cmd.is_query() && self.queue.contains(&cmd) {
             return;
         }
@@ -1571,6 +1610,23 @@ impl App {
             return;
         }
         self.state.ritz_get_missing = false;
+
+        if let Command::List { data: true, .. } = &command {
+            if exit == ExitKind::Usage {
+                // An old ritz-get does not know `--data`: ask again without it (here and for every later list).
+                self.no_data_flag = true;
+                for c in self.queue.iter_mut() {
+                    if let Command::List { data, .. } = c {
+                        *data = false;
+                    }
+                }
+                if let Command::List { offline, all, .. } = command {
+                    self.queue.push_front(Command::List { offline, all, data: false });
+                }
+                self.sync_loading();
+                return;
+            }
+        }
 
         match &command {
             Command::List { offline, .. } => self.list_finished(*offline, exit, &captured),
@@ -1737,7 +1793,7 @@ impl App {
         if refused_fix {
             self.begin_startup();
         } else if !matches!(command, Command::Open { .. }) {
-            self.enqueue(Command::List { offline: false, all: false });
+            self.enqueue(self.list_cmd(false));
         }
     }
 
@@ -2011,7 +2067,7 @@ mod tests {
     }
 
     fn list(offline: bool) -> Command {
-        Command::List { offline, all: false }
+        Command::List { offline, all: false, data: true }
     }
 
     fn some_name(a: &App) -> (String, String) {
@@ -2999,6 +3055,153 @@ mod tests {
         let c = b.next_to_start().unwrap();
         b.handle_event(fin(c, ExitKind::Ok, Captured::default()));
         assert_eq!(b.queue.front(), Some(&Command::Shortcuts { path: None }));
+    }
+
+    #[test]
+    fn lists_ask_for_data_at_startup_and_after_a_mutation() {
+        let mut a = app();
+        a.begin_startup();
+        let lists: Vec<_> = a.queue.iter().filter(|c| matches!(c, Command::List { .. })).cloned().collect();
+        assert_eq!(
+            lists,
+            [
+                Command::List { offline: true, all: false, data: true },
+                Command::List { offline: false, all: false, data: true },
+            ]
+        );
+        let mut a = loaded();
+        let cmd = Command::Hold { name: "ccorral".into() };
+        a.run_user_command(cmd.clone());
+        let c = a.next_to_start().unwrap();
+        a.handle_event(fin(c, ExitKind::Ok, Captured::default()));
+        assert_eq!(a.queue.front(), Some(&Command::List { offline: false, all: false, data: true }));
+        // The top bar's "Check for updates" too.
+        let mut a = loaded();
+        a.dispatch(&egui::Context::default(), Action::CheckForUpdates);
+        assert_eq!(a.queue.front(), Some(&Command::List { offline: false, all: false, data: true }));
+    }
+
+    #[test]
+    fn exit_2_on_a_data_list_falls_back_without_data_for_the_session() {
+        let mut a = app();
+        a.begin_startup();
+        assert_eq!(a.next_to_start(), Some(Command::Dir { path: None }));
+        a.handle_event(fin(Command::Dir { path: None }, ExitKind::Ok, out("/d\n")));
+        let first = a.next_to_start().unwrap();
+        assert_eq!(first, Command::List { offline: true, all: false, data: true });
+        a.handle_event(fin(first, ExitKind::Usage, out("")));
+        assert!(a.no_data_flag);
+        assert!(a.state.log.iter().all(|l| l.kind != LogKind::Err), "no error for the first attempt: {:?}", a.state.log);
+        // The retry runs next and the already queued online list lost its --data too.
+        let rest: Vec<_> = a.queue.iter().cloned().collect();
+        assert_eq!(
+            rest,
+            [
+                Command::List { offline: true, all: false, data: false },
+                Command::List { offline: false, all: false, data: false },
+                Command::Shortcuts { path: None },
+            ]
+        );
+        let retry = a.next_to_start().unwrap();
+        a.handle_event(fin(retry, ExitKind::Ok, out("#porcelain 1\n#online 0\n")));
+        assert!(a.listed);
+        assert!(a.state.log.iter().all(|l| l.kind != LogKind::Err));
+        // Every later list goes without --data, even one built with data: true.
+        a.enqueue(Command::List { offline: false, all: false, data: true });
+        assert!(a.queue.iter().all(|c| !matches!(c, Command::List { data: true, .. })));
+        a.queue.clear();
+        a.begin_startup();
+        assert!(a.queue.iter().all(|c| !matches!(c, Command::List { data: true, .. })));
+        // Another failing exit 2 on a list without data is a real error.
+        let plain = Command::List { offline: false, all: false, data: false };
+        a.queue.clear();
+        a.queue.push_back(plain.clone());
+        a.next_to_start();
+        a.handle_event(fin(plain, ExitKind::Usage, out("")));
+        assert!(a.state.log.iter().any(|l| l.kind == LogKind::Err));
+    }
+
+    #[test]
+    fn delete_data_run_dialog_and_refresh() {
+        let mut a = loaded();
+        let cmd = Command::DeleteData { name: "ritz".into() };
+        assert!(opens_run(&cmd));
+        assert!(!tracked(&cmd));
+        assert_eq!(a.state.verb_of(&cmd), Verb::DeleteData);
+        assert_eq!((Verb::DeleteData.past(), Verb::DeleteData.gerund()), ("Deleted data of", "Deleting data of"));
+        a.dispatch(&egui::Context::default(), Action::DeleteData { name: "ritz".into() });
+        assert_eq!(a.next_to_start(), Some(cmd.clone()));
+        assert_eq!(a.state.run.as_ref().map(|r| r.verb), Some(Verb::DeleteData));
+        assert_eq!(a.state.modal, Some(Modal::Run));
+        assert!(a.state.progress.is_empty(), "no card bar");
+        a.handle_event(RunnerEvent::Line { text: "ritz: data deleted\n".into(), stream: Stream::Stdout });
+        assert_eq!(a.state.log.last().map(|l| l.kind), Some(LogKind::Ok));
+        let mut cap = Captured::default();
+        cap.absorb("ritz: data deleted", Stream::Stdout);
+        a.handle_event(fin(cmd, ExitKind::Ok, cap));
+        // The refresh list asks for data again, and the dialog settles on it.
+        let list = a.next_to_start().unwrap();
+        assert_eq!(list, Command::List { offline: false, all: false, data: true });
+        assert!(matches!(a.state.run.as_ref().map(|r| &r.phase), Some(RunPhase::Running)));
+        a.handle_event(fin(list, ExitKind::Ok, out("#porcelain 1\n#online 1\n")));
+        assert_eq!(a.state.run.as_ref().map(|r| &r.phase), Some(&RunPhase::Done { menu: false }));
+    }
+
+    #[test]
+    fn delete_data_installed_fails_with_the_uninstall_first_reason() {
+        let mut a = loaded();
+        let cmd = Command::DeleteData { name: "ritz".into() };
+        a.run_user_command(cmd.clone());
+        a.next_to_start();
+        let line = "ritz: FAILED (uninstall first: ritz-get remove ritz)";
+        a.handle_event(RunnerEvent::Line { text: format!("{line}\n"), stream: Stream::Stdout });
+        assert_eq!(a.state.log.last().map(|l| l.kind), Some(LogKind::Err));
+        let mut cap = Captured::default();
+        cap.absorb(line, Stream::Stdout);
+        a.handle_event(fin(cmd, ExitKind::Failed, cap));
+        assert_eq!(
+            a.state.run.as_ref().map(|r| r.phase.clone()),
+            Some(RunPhase::Failed { reason: "uninstall first: ritz-get remove ritz".into() })
+        );
+    }
+
+    #[test]
+    fn delete_data_busy_shows_the_busy_phase() {
+        let mut a = loaded();
+        let cmd = Command::DeleteData { name: "ritz".into() };
+        a.run_user_command(cmd.clone());
+        a.next_to_start();
+        a.handle_event(fin(cmd, ExitKind::Busy, Captured::default()));
+        assert_eq!(a.state.run.as_ref().map(|r| r.phase.clone()), Some(RunPhase::Busy));
+    }
+
+    #[test]
+    fn delete_data_is_not_an_icon_refresh() {
+        let mut a = app();
+        a.state.dir = Some(PathBuf::from("/d"));
+        let cmd = Command::DeleteData { name: "foo".into() };
+        assert!(a.icons_to_refresh(&cmd, ExitKind::Ok, &Captured::default()).is_empty());
+    }
+
+    #[test]
+    fn delete_data_lines_are_ok_and_the_failure_is_red() {
+        assert_eq!(classify("ritz: data deleted"), LogKind::Ok);
+        assert_eq!(classify("ritz: no data left"), LogKind::Ok);
+        assert_eq!(classify("cs2-multimap: a website has no data"), LogKind::Ok);
+        assert_eq!(classify("ritz: FAILED (uninstall first: ritz-get remove ritz)"), LogKind::Err);
+        assert_eq!(classify("note: data deleted soon"), LogKind::Info);
+    }
+
+    #[test]
+    fn data_shot_hooks() {
+        let mut s = AppState::default();
+        s.apply_shot_hook("dataleft=Software/ritz");
+        assert_eq!(s.selected.as_deref(), Some("Software/ritz"));
+        assert_eq!(s.modal, None);
+        let mut s = AppState::default();
+        s.apply_shot_hook("deletedata=Software/ritz");
+        assert_eq!(s.selected.as_deref(), Some("Software/ritz"));
+        assert_eq!(s.modal, Some(Modal::DeleteData { id: "Software/ritz".into() }));
     }
 
     #[test]

@@ -28,6 +28,7 @@ fn base(section: &str, name: &str, title: &str, desc: &str) -> Entry {
         desc: desc.into(),
         shortcut: ShortcutState::None,
         setup: Vec::new(),
+        data: Vec::new(),
     }
 }
 
@@ -79,6 +80,11 @@ fn setup(mut e: Entry, steps: &[&str]) -> Entry {
     e
 }
 
+fn with_data(mut e: Entry, data: &[(&str, u64)]) -> Entry {
+    e.data = data.iter().map(|(p, kb)| DataPath { path: (*p).into(), kb: Some(*kb) }).collect();
+    e
+}
+
 pub fn listing() -> Listing {
     use ShortcutState::{None as NoSc, Off, On};
     let mut yt = behind(
@@ -111,7 +117,10 @@ pub fn listing() -> Listing {
             name: "Software".into(),
             entries: vec![
                 yt,
-                available("Software", "ritz", "Ritz", "Linux Steam launch wrapper", "9e24960"),
+                with_data(
+                    available("Software", "ritz", "Ritz", "Linux Steam launch wrapper", "9e24960"),
+                    &[("~/.config/ritz", 12288), ("~/.local/share/ritz", 2048)],
+                ),
                 forza,
                 setup(
                     available(
@@ -131,7 +140,10 @@ pub fn listing() -> Listing {
                     ],
                 ),
                 geo,
-                current("Software", "SteamAlt", "Steam Userdata Copier", "Copy Steam game saves and settings between accounts on one PC", "2026-10-17 8a3f1c9", On),
+                with_data(
+                    current("Software", "SteamAlt", "Steam Userdata Copier", "Copy Steam game saves and settings between accounts on one PC", "2026-10-17 8a3f1c9", On),
+                    &[("~/.config/SteamAlt", 340)],
+                ),
                 setup(
                     current(
                         "Software", "gamescope-ritz", "Gamescope Ritz",

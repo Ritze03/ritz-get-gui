@@ -13,13 +13,13 @@
 //! - "16 fields" in PORCELAIN.md counts the leading `E` tag: tag + 15 data columns; a 17-field
 //!   line has the extra trailing `shortcut` column.
 //! - Fields are TAB-separated; `desc` may be empty (trailing empty field).
-//! - `S` lines attach to the preceding `E`. `#porcelain N` must be the first line; N != 1 ->
+//! - `S` and `D` lines attach to the preceding `E` (`D`: data folders, only with `list --data`). `#porcelain N` must be the first line; N != 1 ->
 //!   [`PorcelainError::UnsupportedVersion`].
 //! - `Entry::title` is `None` when the column is empty or equals `name`.
 
 use std::fmt;
 
-use crate::model::{Entry, Kind, Listing, Section, SetupStep, ShortcutState, State, Status, Version};
+use crate::model::{DataPath, Entry, Kind, Listing, Section, SetupStep, ShortcutState, State, Status, Version};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PorcelainError {
@@ -112,7 +112,19 @@ pub fn parse(text: &str) -> Result<Listing, PorcelainError> {
                 }
                 entry.setup.push(SetupStep { text: f[2].to_owned() });
             }
-            _ => {} // unknown record type: ignored, so newer ritz-get records (e.g. D) don't break older GUIs
+            "D" => {
+                // D<TAB>NAME<TAB>PATH<TAB>KB: an existing data folder (`list --data`). Does not touch `last`.
+                if f.len() != 4 {
+                    return Err(bad(n, format!("D line has {} fields, expected 4", f.len())));
+                }
+                let Some((si, ei)) = last else { return Err(bad(n, "D line without a preceding E line".into())) };
+                let entry = &mut listing.sections[si].entries[ei];
+                if entry.name != f[1] {
+                    return Err(bad(n, format!("D line for {:?} follows E line for {:?}", f[1], entry.name)));
+                }
+                entry.data.push(DataPath { path: f[2].to_owned(), kb: f[3].parse().ok() });
+            }
+            _ => {} // unknown record type: ignored, so newer ritz-get records don't break older GUIs
         }
     }
 
@@ -169,6 +181,7 @@ fn parse_entry(f: &[&str]) -> Result<Entry, String> {
         desc: f[15].to_owned(),
         shortcut: f.get(16).map_or(ShortcutState::None, |s| ShortcutState::parse(s)),
         setup: Vec::new(),
+        data: Vec::new(),
     })
 }
 
@@ -261,6 +274,40 @@ mod tests {
         assert_eq!(l.entries().count(), 1);
         let foo = find(&l, "foo");
         assert_eq!(foo.setup.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(), ["step one", "step two"]);
+        assert_eq!(foo.data, [DataPath { path: "~/.config/foo".into(), kb: Some(128) }]);
+    }
+
+    #[test]
+    fn d_records_parse_after_e_and_s() {
+        let t = doc(&format!(
+            "{}\nS\tfoo\tstep\nD\tfoo\t~/.config/foo\t12288\nD\tfoo\t~/.local/share/foo\t-\n{}\nD\tbar\t~/.bar\t5",
+            e_line(&[]),
+            e_line(&[(2, "bar")])
+        ));
+        let l = parse(&t).unwrap();
+        let foo = find(&l, "foo");
+        assert_eq!(foo.setup.len(), 1);
+        assert_eq!(
+            foo.data,
+            [
+                DataPath { path: "~/.config/foo".into(), kb: Some(12288) },
+                DataPath { path: "~/.local/share/foo".into(), kb: None },
+            ]
+        );
+        assert_eq!(foo.data_label().as_deref(), Some("2 folders, 12 MB"));
+        assert_eq!(find(&l, "bar").data, [DataPath { path: "~/.bar".into(), kb: Some(5) }]);
+    }
+
+    #[test]
+    fn bad_d_lines() {
+        let t = "#porcelain 1\n#online 1\nD\tfoo\t~/x\t1\n";
+        assert!(matches!(parse(t), Err(PorcelainError::BadLine { line: 3, .. })));
+        let t = doc(&format!("{}\nD\tother\t~/x\t1", e_line(&[])));
+        assert!(matches!(parse(&t), Err(PorcelainError::BadLine { line: 4, .. })));
+        let t = doc(&format!("{}\nD\tfoo\t~/x", e_line(&[])));
+        assert!(matches!(parse(&t), Err(PorcelainError::BadLine { line: 4, .. })));
+        let t = doc(&format!("{}\nD\tfoo\t~/x\t1\textra", e_line(&[])));
+        assert!(matches!(parse(&t), Err(PorcelainError::BadLine { line: 4, .. })));
     }
 
     #[test]

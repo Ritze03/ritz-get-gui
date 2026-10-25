@@ -667,8 +667,8 @@ if read -r line; then echo "stdin=data"; else echo "stdin=eof"; fi"#,
 
     fn all_commands() -> Vec<Command> {
         vec![
-            Command::List { offline: true, all: false },
-            Command::List { offline: false, all: true },
+            Command::List { offline: true, all: false, data: false },
+            Command::List { offline: false, all: true, data: false },
             Command::Install { name: n("foo"), branch: None },
             Command::Install { name: n("foo"), branch: Some(n("dev")) },
             Command::Update { name: None },
@@ -719,7 +719,7 @@ if read -r line; then echo "stdin=data"; else echo "stdin=eof"; fi"#,
         assert!(finished(&ev).2.stdout.contains("argv=update --yes\n"));
         let ev = run(&s.env, Command::Reset { name: n("x") });
         assert!(finished(&ev).2.stdout.contains("argv=reset x --yes\n"));
-        let ev = run(&s.env, Command::List { offline: true, all: false });
+        let ev = run(&s.env, Command::List { offline: true, all: false, data: false });
         assert!(finished(&ev).2.stdout.contains("argv=list --offline --porcelain\n"));
     }
 
@@ -814,7 +814,7 @@ if read -r line; then echo "stdin=data"; else echo "stdin=eof"; fi"#,
         assert_eq!(finished(&ev).2.stdout, "out1\nout2\n");
         // other query shapes
         for cmd in [
-            Command::List { offline: false, all: false },
+            Command::List { offline: false, all: false, data: false },
             Command::Dir { path: None },
             Command::Shortcuts { path: None },
         ] {
