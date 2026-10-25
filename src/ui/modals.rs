@@ -156,9 +156,11 @@ fn delete_data(ctx: &egui::Context, state: &AppState, id: &str, actions: &mut Ve
         } else {
             data_list(ui, data, list_h);
             if installed {
+                // Nothing can be deleted yet, so no warning about it.
                 body(ui, &format!("{display} is still installed and uses this data. Remove it first, then delete its data."));
+            } else {
+                body(ui, "This can\u{2019}t be undone.");
             }
-            body(ui, "This can\u{2019}t be undone.");
         }
         let mut close = false;
         buttons(ui, |ui| {
@@ -185,6 +187,15 @@ fn delete_data(ctx: &egui::Context, state: &AppState, id: &str, actions: &mut Ve
     }
 }
 
+/// Hanging indent of a wrapped path, in pairs of spaces (mono: about 1 em).
+const HANG: usize = 1;
+
+/// `wrapped` (lines joined by `\n`) with `indent` in front of every line but the first, so the
+/// continuation of a long path does not look like the next path.
+fn hang(wrapped: &str, indent: &str) -> String {
+    wrapped.split('\n').enumerate().map(|(i, l)| if i == 0 { l.to_owned() } else { format!("{indent}{l}") }).collect::<Vec<_>>().join("\n")
+}
+
 /// The data folders in a FIELD box: the path (mono, wrapped at slashes) on the left, its size dim on the right.
 fn data_list(ui: &mut egui::Ui, data: &[crate::model::DataPath], max_h: f32) {
     let size_font = theme::regular(12.0);
@@ -198,14 +209,17 @@ fn data_list(ui: &mut egui::Ui, data: &[crate::model::DataPath], max_h: f32) {
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             egui::ScrollArea::vertical().max_height(max_h).auto_shrink([false, true]).show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 6.0;
+                // more between two paths than between the wrapped lines of one
+                ui.spacing_mut().item_spacing.y = 9.0;
                 // 12 px between the path and its size, and a little for the scroll bar
                 let pw = (ui.available_width() - sw - 12.0 - 10.0).max(60.0);
                 let font = theme::mono(11.5);
+                let indent = "  ".repeat(HANG);
+                let hang_w = ui.painter().layout_no_wrap(indent.clone(), font.clone(), theme::TEXT).size().x;
                 for (d, size) in data.iter().zip(&sizes) {
                     ui.horizontal_top(|ui| {
                         ui.spacing_mut().item_spacing.x = 0.0;
-                        let shown = theme::wrap_at_slashes(ui, &tilde(&d.path), &font, pw);
+                        let shown = hang(&theme::wrap_at_slashes(ui, &tilde(&d.path), &font, pw - hang_w), &indent);
                         ui.allocate_ui_with_layout(egui::vec2(pw, 0.0), Layout::top_down(Align::Min), |ui| {
                             ui.set_width(pw);
                             ui.add(egui::Label::new(RichText::new(shown).font(font.clone()).color(theme::TEXT)).wrap());
@@ -508,6 +522,42 @@ fn room(ctx: &egui::Context, used: f32, min: f32, max: f32) -> f32 {
     (ctx.content_rect().height() - 2.0 * SCREEN_PAD - used).clamp(min, max)
 }
 
+#[derive(Clone, Copy)]
+enum Title {
+    Running,
+    Done,
+    Failed,
+}
+
+/// The progress dialog's title: "Installing Ritz…", "Installed Ritz", "Couldn’t install Ritz". Deleting
+/// data reads "Deleting Ritz’s data…" (the verb's own wording is for the log and the status bar).
+fn run_title(verb: Verb, kind: Title, display: &str) -> String {
+    if verb == Verb::DeleteData {
+        return match kind {
+            Title::Running => format!("Deleting {display}\u{2019}s data\u{2026}"),
+            Title::Done => format!("Deleted {display}\u{2019}s data"),
+            Title::Failed => format!("Couldn\u{2019}t delete {display}\u{2019}s data"),
+        };
+    }
+    match kind {
+        Title::Running => format!("{} {display}\u{2026}", verb.gerund()),
+        Title::Done => format!("{} {display}", verb.past()),
+        Title::Failed => format!("Couldn\u{2019}t {} {display}", verb.base()),
+    }
+}
+
+/// The line under a failure's reason.
+fn failed_note(verb: Verb, reason: &str, display: &str) -> String {
+    match verb {
+        Verb::Install => "Nothing was installed. Open the log for details, then try again.".to_owned(),
+        Verb::Remove => "Open the log for details, then try again.".to_owned(),
+        // ritz-get refuses to delete the data of an installed program: `uninstall first: ritz-get remove NAME`
+        Verb::DeleteData if reason.starts_with("uninstall first") => format!("Nothing was deleted. Remove {display} first, then delete its data."),
+        Verb::DeleteData => "Nothing was deleted. Open the log for details, then try again.".to_owned(),
+        _ => "Your installed version is unchanged and still works.".to_owned(),
+    }
+}
+
 fn run_one(ctx: &egui::Context, state: &AppState, run: &Run, actions: &mut Vec<Action>) -> bool {
     let name = run.name.as_deref().unwrap_or_default();
     let entry = state.listing.entries().find(|e| e.name == name);
@@ -516,10 +566,10 @@ fn run_one(ctx: &egui::Context, state: &AppState, run: &Run, actions: &mut Vec<A
     let menu = matches!(run.phase, RunPhase::Done { menu: true });
 
     let (mark, title) = match &run.phase {
-        RunPhase::Running => (None, format!("{} {display}\u{2026}", verb.gerund())),
+        RunPhase::Running => (None, run_title(verb, Title::Running, &display)),
         RunPhase::Done { menu: true } => (Some(Mark::Ok), display.clone()),
-        RunPhase::Done { menu: false } => (Some(Mark::Ok), format!("{} {display}", verb.past())),
-        RunPhase::Failed { .. } => (Some(Mark::Bad), format!("Couldn\u{2019}t {} {display}", verb.base())),
+        RunPhase::Done { menu: false } => (Some(Mark::Ok), run_title(verb, Title::Done, &display)),
+        RunPhase::Failed { .. } => (Some(Mark::Bad), run_title(verb, Title::Failed, &display)),
         RunPhase::Deps { .. } => (Some(Mark::Warn), "Missing tools".to_owned()),
         RunPhase::Setup => (Some(Mark::Warn), "Needs setup in a terminal".to_owned()),
         RunPhase::Busy => (Some(Mark::Warn), "ritz-get is busy".to_owned()),
@@ -600,13 +650,7 @@ fn run_one(ctx: &egui::Context, state: &AppState, run: &Run, actions: &mut Vec<A
             }
             RunPhase::Failed { reason } => {
                 alert(ui, reason);
-                let note = match verb {
-                    Verb::Install => "Nothing was installed. Open the log for details, then try again.",
-                    Verb::Remove => "Open the log for details, then try again.",
-                    Verb::DeleteData => "Nothing was deleted. Open the log for details, then try again.",
-                    _ => "Your installed version is unchanged and still works.",
-                };
-                body(ui, note);
+                body(ui, &failed_note(verb, reason, &display));
                 if state.run_log_open {
                     run_log(ui, state, log_h);
                 }
@@ -1348,12 +1392,35 @@ mod tests {
         assert_eq!(press(&s, Some("Delete")), vec![Action::CloseModal, Action::DeleteData { name: "ritz".into() }]);
     }
 
+    /// Every text the modal draws (a few frames in, so the layout has settled).
+    fn drawn_texts(state: &AppState) -> Vec<String> {
+        let ctx = test_render::context();
+        let mut actions = Vec::new();
+        let mut texts = Vec::new();
+        for _ in 0..6 {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 700.0))),
+                ..Default::default()
+            };
+            let out = ctx.run(input, |ctx| draw(ctx, state, &mut actions));
+            texts = out.shapes.iter().filter_map(|c| if let egui::Shape::Text(t) = &c.shape { Some(t.galley.text().to_owned()) } else { None }).collect();
+        }
+        texts
+    }
+
     /// A program that is still installed cannot be confirmed (ritz-get would refuse); one without data
-    /// has nothing to confirm.
+    /// has nothing to confirm. Only a confirmable delete warns that it can't be undone.
     #[test]
     fn delete_data_confirm_is_off_when_installed_or_empty() {
+        let undone = "This can\u{2019}t be undone.";
+        let mut s = sample_state();
+        s.apply_shot_hook("deletedata=Software/ritz");
+        assert!(drawn_texts(&s).iter().any(|t| t == undone), "the confirmable delete warns");
         let mut s = sample_state();
         s.apply_shot_hook("deletedata=Software/SteamAlt");
+        let texts = drawn_texts(&s);
+        assert!(texts.iter().any(|t| t.contains("Remove it first, then delete its data.")), "{texts:?}");
+        assert!(!texts.iter().any(|t| t.contains("undone")), "no warning when Delete is off: {texts:?}");
         assert_eq!(press(&s, Some("Delete")), Vec::<Action>::new());
         let mut s = sample_state();
         s.apply_shot_hook("deletedata=Software/ritz");
@@ -1391,6 +1458,62 @@ mod tests {
         // Failed delete: no "still on ..."
         test_render::finished_run(&mut s, "Software/SteamAlt", Verb::DeleteData, RunPhase::Failed { reason: "x".into() }, "x");
         assert!(subs(&s, "Software/SteamAlt").is_empty());
+        // The fixture helper leaves no card bar of the install hook behind, and a finished delete has no data left
+        assert!(s.progress.is_empty(), "no card progress: {:?}", s.progress);
+        test_render::finished_run(&mut s, "Software/ritz", Verb::DeleteData, RunPhase::Done { menu: false }, "ritz: data deleted");
+        assert!(s.progress.is_empty());
+        assert!(s.listing.find("Software/ritz").unwrap().data.is_empty());
+        assert!(subs(&s, "Software/ritz").is_empty(), "no \"Data left\" after the delete");
+    }
+
+    /// The dialog says "Deleting Ritz’s data…" / "Deleted Ritz’s data" / "Couldn’t delete Ritz’s data"; the
+    /// other verbs keep their wording. A failure because the program is installed says what to do first.
+    #[test]
+    fn delete_data_run_titles_and_failed_note() {
+        assert_eq!(run_title(Verb::DeleteData, Title::Running, "Ritz"), "Deleting Ritz\u{2019}s data\u{2026}");
+        assert_eq!(run_title(Verb::DeleteData, Title::Done, "Ritz"), "Deleted Ritz\u{2019}s data");
+        assert_eq!(run_title(Verb::DeleteData, Title::Failed, "Ritz"), "Couldn\u{2019}t delete Ritz\u{2019}s data");
+        assert_eq!(run_title(Verb::Install, Title::Running, "Ritz"), "Installing Ritz\u{2026}");
+        assert_eq!(run_title(Verb::Remove, Title::Done, "Ritz"), format!("{} Ritz", Verb::Remove.past()));
+        assert_eq!(run_title(Verb::Update, Title::Failed, "Ritz"), "Couldn\u{2019}t update Ritz");
+
+        assert_eq!(
+            failed_note(Verb::DeleteData, "uninstall first: ritz-get remove Ritz", "Ritz"),
+            "Nothing was deleted. Remove Ritz first, then delete its data."
+        );
+        assert_eq!(failed_note(Verb::DeleteData, "x", "Ritz"), "Nothing was deleted. Open the log for details, then try again.");
+        assert_eq!(failed_note(Verb::Remove, "uninstall first", "Ritz"), "Open the log for details, then try again.");
+
+        // and on screen
+        let mut s = sample_state();
+        let reason = "uninstall first: ritz-get remove SteamAlt".to_owned();
+        test_render::finished_run(&mut s, "Software/SteamAlt", Verb::DeleteData, RunPhase::Failed { reason }, "x");
+        let name = s.listing.find("Software/SteamAlt").unwrap().display().to_owned();
+        let texts = drawn_texts(&s);
+        assert!(texts.iter().any(|t| t == &format!("Couldn\u{2019}t delete {name}\u{2019}s data")), "{texts:?}");
+        assert!(texts.iter().any(|t| t == &format!("Nothing was deleted. Remove {name} first, then delete its data.")), "{texts:?}");
+    }
+
+    /// A wrapped path continues one indent in; its first line (and a path that fits) does not move.
+    #[test]
+    fn wrapped_paths_hang() {
+        let indent = "  ".repeat(HANG);
+        assert_eq!(hang("~/.local/share/\nritz-get/\ngeofinder", &indent), "~/.local/share/\n  ritz-get/\n  geofinder");
+        assert_eq!(hang("~/.config/ritz", &indent), "~/.config/ritz");
+        // in the dialog: every continuation line of the (long) paths is indented, no first line is
+        let mut s = sample_state();
+        s.apply_shot_hook("deletedata=Software/ritz");
+        ritz_mut(&mut s).data.push(crate::model::DataPath {
+            path: "~/.local/share/ritz/some/deeply/nested/profile-folder/with/an/extremely/long/path/that/wraps/more/than/once/here".into(),
+            kb: Some(1),
+        });
+        let texts = drawn_texts(&s);
+        let long = texts.iter().find(|t| t.contains("deeply/")).expect("the long path is drawn");
+        assert!(long.contains('\n'), "it wraps: {long:?}");
+        for (i, l) in long.lines().enumerate() {
+            assert_eq!(l.starts_with(&indent), i > 0, "line {i} of {long:?}");
+        }
+        assert_eq!(long.replace(['\n', ' '], ""), tilde("~/.local/share/ritz/some/deeply/nested/profile-folder/with/an/extremely/long/path/that/wraps/more/than/once/here"));
     }
 
     #[test]

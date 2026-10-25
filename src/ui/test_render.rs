@@ -257,17 +257,33 @@ pub fn overlay_shapes<'a>(full: &'a FullOutput, base: &FullOutput) -> Vec<&'a eg
 
 /// A finished Remove / DeleteData run of `id` (section/name) behind the progress dialog, in `phase`
 /// (`Done` shows `ok_line` in its box). The listing is left as it is: pick a program that is not
-/// installed and has data for "removed, data left".
+/// installed and has data for "removed, data left". A finished DeleteData also drops the entry's
+/// data (the refreshed listing after the delete). Like the real app, neither command puts a bar on
+/// the program's card (`begin_progress` ignores them), so no per-card progress is left over from the
+/// install hook this starts from, and the run's log is that command's alone.
 pub fn finished_run(s: &mut AppState, id: &str, verb: crate::app::Verb, phase: crate::app::RunPhase, ok_line: &str) {
-    use crate::app::Verb;
+    use crate::app::{RunPhase, Verb};
     let name = id.rsplit('/').next().unwrap_or(id).to_owned();
     s.apply_shot_hook(&format!("install-failed={id}"));
+    let cmd = match verb {
+        Verb::DeleteData => crate::model::Command::DeleteData { name: name.clone() },
+        _ => crate::model::Command::Remove { name: name.clone() },
+    };
     if let Some(run) = &mut s.run {
         run.verb = verb;
-        run.cmd = match verb {
-            Verb::DeleteData => crate::model::Command::DeleteData { name },
-            _ => crate::model::Command::Remove { name },
-        };
+        run.cmd = cmd.clone();
+    }
+    // the hook's card bar ("FAILED") and its install log lines are not this run's
+    s.progress.clear();
+    s.progress_order.clear();
+    if let Some(at) = s.log.iter().rposition(|l| l.kind == crate::model::LogKind::Cmd) {
+        s.log.truncate(at + 1);
+        s.log[at].text = format!("$ {cmd}");
+    }
+    if verb == Verb::DeleteData && matches!(phase, RunPhase::Done { .. }) {
+        if let Some(e) = s.listing.sections.iter_mut().flat_map(|x| x.entries.iter_mut()).find(|e| e.name == name) {
+            e.data.clear();
+        }
     }
     s.push_log(crate::model::LogKind::Ok, ok_line.to_owned());
     s.set_run_phase(phase);
