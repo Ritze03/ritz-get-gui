@@ -69,6 +69,9 @@ fn letter(entry: &Entry) -> IconSource {
     }
 }
 
+// ponytail: hardcoded; could be parsed from the ritz-get entry's `source` if the repo ever moves.
+const SITE_ICONS: (&str, &str) = ("Ritze03", "ritz-get");
+
 /// Decide the icon source for `entry`. `dir` is the clone folder from `ritz-get dir` (`None` until known).
 /// Only a cheap `Path::exists` touches the disk.
 pub fn icon_source(entry: &Entry, dir: Option<&Path>) -> IconSource {
@@ -80,9 +83,22 @@ pub fn icon_source(entry: &Entry, dir: Option<&Path>) -> IconSource {
         None
     };
     if let Some(f) = file {
-        return if f.exists() { IconSource::File(f) } else { letter(entry) };
+        if f.exists() {
+            return IconSource::File(f);
+        }
+        if !entry.is_website() {
+            return letter(entry);
+        }
     }
-    if !entry.is_website() && !entry.is_installed() {
+    if entry.is_website() {
+        // no local ritz-get clone (the usual install): fetch from the ritz-get repo's `icons/`
+        let (owner, repo) = SITE_ICONS;
+        return IconSource::Remote {
+            url: format!("https://raw.githubusercontent.com/{owner}/{repo}/HEAD/icons/{}.png", entry.name),
+            cache_path: cache_dir().join(format!("{owner}_{repo}_HEAD_icon_{}.png", sanitize(&entry.name))),
+        };
+    }
+    if !entry.is_installed() {
         if let Some((owner, repo)) = entry.source.as_deref().and_then(parse_owner_repo) {
             let branch = entry.branch.as_deref().filter(|b| !b.is_empty());
             let rf = branch.unwrap_or("HEAD");
@@ -153,7 +169,10 @@ fn fetch_to_cache(url: &str, cache_path: &Path, sha: &str) -> bool {
         }
         None => {
             let _ = std::fs::remove_file(cache_path);
-            let _ = std::fs::write(sidecar(cache_path), format!("!{sha}"));
+            // website icons have no sha (""): "!" would block every retry forever, so retry next launch
+            if !sha.is_empty() {
+                let _ = std::fs::write(sidecar(cache_path), format!("!{sha}"));
+            }
             false
         }
     }
@@ -444,7 +463,16 @@ mod tests {
         let u = entry("ritz", Kind::Program, State::Unlisted, None);
         assert_eq!(icon_source(&u, Some(&d)), IconSource::File(d.join("ritz/icon.png")));
         let w = entry("site", Kind::Website, State::Website, Some("https://x.y"));
-        assert!(matches!(icon_source(&w, Some(&d)), IconSource::Letter { .. }));
+        // no local file (or no dir): fetched from the ritz-get repo's icons/ folder
+        for dir in [Some(d.as_path()), None] {
+            match icon_source(&w, dir) {
+                IconSource::Remote { url, cache_path } => {
+                    assert_eq!(url, "https://raw.githubusercontent.com/Ritze03/ritz-get/HEAD/icons/site.png");
+                    assert_eq!(cache_path.file_name().unwrap(), "Ritze03_ritz-get_HEAD_icon_site.png");
+                }
+                o => panic!("{o:?}"),
+            }
+        }
         std::fs::write(d.join("ritz-get/icons/site.png"), b"x").unwrap();
         assert_eq!(icon_source(&w, Some(&d)), IconSource::File(d.join("ritz-get/icons/site.png")));
         assert!(matches!(icon_source(&p, None), IconSource::Letter { .. }));
@@ -515,6 +543,7 @@ mod tests {
         // another entry's image is not borrowed
         last.insert("S/other".into(), PathBuf::from("/x.png"));
         assert!(matches!(resolve(&gone, None, &mut last, |_| false), IconSource::Letter { .. }));
+        // a website whose icon is not fetched yet is a letter too
         let site = entry("site", Kind::Website, State::Website, Some("https://x.y"));
         assert!(matches!(resolve(&site, None, &mut last, |_| false), IconSource::Letter { .. }));
     }
