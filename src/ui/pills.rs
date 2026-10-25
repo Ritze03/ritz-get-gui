@@ -11,7 +11,8 @@
 //! | `state=offline` (not installed)             | OFFLINE (TEXT_DIM)                    |
 //! | `state=available`                           | NOT INSTALLED (TEXT_DIM)              |
 //! | session `Badge::Needs(tools)`               | NEEDS <TOOL> per tool (DANGER); for a program that is not installed it replaces NOT INSTALLED / OFFLINE |
-//! | session `Badge::SetupNeeded`                | SETUP NEEDED (WARN)                   |
+//! | not installed, has data on disk             | DATA LEFT (TEXT_DIM), tooltip = `data_label()` |
+//! | session `Badge::SetupNeeded`               | SETUP NEEDED (WARN)                   |
 //! | `held`                                      | pause glyph (TEXT_DIM), tooltip "Auto-update off (held)" |
 //! | `status=modified`                           | MODIFIED (WARN, D53)                  |
 //! | `setup` steps                               | SETUP (ACCENT)                        |
@@ -85,6 +86,11 @@ pub fn pills(state: &AppState, e: &Entry) -> Vec<Pill> {
         v.push(Pill::kind(PillKind::Missing));
     }
 
+    if !e.is_installed() && !e.is_website() {
+        if let Some(label) = e.data_label() {
+            v.push(Pill { text: "Data left".to_owned(), color: theme::TEXT_DIM, glyph: false, tip: None }.tip(label));
+        }
+    }
     if matches!(state.badge(e), Some(Badge::SetupNeeded)) {
         v.push(Pill::kind(PillKind::SetupNeeded).tip("Needs root setup: run `ritz-get install` in a terminal"));
     }
@@ -181,6 +187,20 @@ mod tests {
         let geo = labels(&s, "Software/geofinder");
         assert!(geo.contains(&"Modified".to_owned()));
         assert!(labels(&s, "Software/yt-dlp-gui").contains(&theme::glyph::PAUSE.to_owned()));
+    }
+
+    #[test]
+    fn data_left_pill_only_for_not_installed_programs_with_data() {
+        let s = st();
+        let ritz = s.listing.find("Software/ritz").unwrap();
+        let all = pills(&s, ritz);
+        assert_eq!(all.iter().map(|p| p.text.as_str()).collect::<Vec<_>>(), ["Not installed", "Data left"]);
+        let p = &all[1];
+        assert_eq!(p.color, theme::TEXT_DIM);
+        assert_eq!(p.tip.as_deref(), Some("2 folders, 14 MB"));
+        assert!(!labels(&s, "Software/SteamAlt").contains(&"Data left".to_owned()), "installed: no data pill");
+        assert!(!labels(&s, "Software/ForzaTelemetryV3Launcher").contains(&"Data left".to_owned()));
+        assert!(!labels(&s, "Websites/cs2-alias-cycling").contains(&"Data left".to_owned()));
     }
 
     #[test]
