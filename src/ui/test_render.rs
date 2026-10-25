@@ -255,9 +255,28 @@ pub fn overlay_shapes<'a>(full: &'a FullOutput, base: &FullOutput) -> Vec<&'a eg
     full.shapes.iter().filter(|c| !known.contains(&key(c))).collect()
 }
 
+/// A finished Remove / DeleteData run of `id` (section/name) behind the progress dialog, in `phase`
+/// (`Done` shows `ok_line` in its box). The listing is left as it is: pick a program that is not
+/// installed and has data for "removed, data left".
+pub fn finished_run(s: &mut AppState, id: &str, verb: crate::app::Verb, phase: crate::app::RunPhase, ok_line: &str) {
+    use crate::app::Verb;
+    let name = id.rsplit('/').next().unwrap_or(id).to_owned();
+    s.apply_shot_hook(&format!("install-failed={id}"));
+    if let Some(run) = &mut s.run {
+        run.verb = verb;
+        run.cmd = match verb {
+            Verb::DeleteData => crate::model::Command::DeleteData { name },
+            _ => crate::model::Command::Remove { name },
+        };
+    }
+    s.push_log(crate::model::LogKind::Ok, ok_line.to_owned());
+    s.set_run_phase(phase);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::{RunPhase, Verb};
     use crate::model::{Badge, LastRun, Modal, Status, View};
 
     fn fixture(name: &str) -> crate::model::Listing {
@@ -298,6 +317,41 @@ mod tests {
         Scenario { name: "notfound", build: |s| { s.listing = Default::default(); s.selected = None; s.ritz_get_missing = true; s.checked_at = None; }, overlay: false },
         Scenario { name: "settings_notfound", build: |s| { s.view = View::Settings; s.ritz_get_missing = true; s.restart = true; }, overlay: false },
         Scenario { name: "modal_reset", build: |s| { s.dir = Some("/home/u/.local/share/ritz-get".into()); s.modal = Some(Modal::Reset { id: "Software/geofinder".into() }); s.selected = Some("Software/geofinder".into()); }, overlay: true },
+        // Delete program data: the confirmation (ritz: two folders; SteamAlt: installed, so Delete is off), and the
+        // progress dialog after a Remove that left data (Done + "Delete data...") and of the delete itself.
+        Scenario { name: "modal_delete_data", build: |s| s.apply_shot_hook("deletedata=Software/ritz"), overlay: true },
+        Scenario { name: "modal_delete_data_installed", build: |s| s.apply_shot_hook("deletedata=Software/SteamAlt"), overlay: true },
+        Scenario {
+            name: "modal_delete_data_many",
+            build: |s| {
+                s.apply_shot_hook("deletedata=Software/ritz");
+                let e = entry_mut(s, "ritz");
+                for i in 0..14 {
+                    e.data.push(crate::model::DataPath { path: format!("~/.local/share/ritz/some/deeply/nested/profile-folder-number-{i}"), kb: (i % 3 != 0).then_some(1000 * i) });
+                }
+            },
+            overlay: true,
+        },
+        Scenario {
+            name: "modal_remove_done_with_data",
+            build: |s| finished_run(s, "Software/ritz", Verb::Remove, RunPhase::Done { menu: false }, "ritz: removed"),
+            overlay: true,
+        },
+        Scenario {
+            name: "modal_delete_data_running",
+            build: |s| { finished_run(s, "Software/ritz", Verb::DeleteData, RunPhase::Running, "ritz: deleting"); s.running = None; },
+            overlay: true,
+        },
+        Scenario {
+            name: "modal_delete_data_done",
+            build: |s| finished_run(s, "Software/ritz", Verb::DeleteData, RunPhase::Done { menu: false }, "ritz: data deleted"),
+            overlay: true,
+        },
+        Scenario {
+            name: "modal_delete_data_failed",
+            build: |s| finished_run(s, "Software/SteamAlt", Verb::DeleteData, RunPhase::Failed { reason: "uninstall first: ritz-get remove SteamAlt".into() }, "x"),
+            overlay: true,
+        },
         // The progress dialog in every state (install: running / done = the 2a question / failed / missing
         // tools with and without a `deps:` command; Update all: running / finished), and the same running
         // dialogs with their log open (long lines, 60 of them).
