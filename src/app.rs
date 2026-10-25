@@ -829,6 +829,7 @@ impl AppState {
             (RunPhase::Done { .. }, None) => "Update finished".into(),
             (RunPhase::Done { .. }, Some(w)) => format!("{w}: add to the start menu?"),
             (RunPhase::Failed { .. }, None) => "Update failed".into(),
+            (RunPhase::Failed { .. }, Some(w)) if run.verb == Verb::DeleteData => format!("{w}: deleting data failed"),
             (RunPhase::Failed { .. }, Some(w)) => format!("{w}: {} failed", run.verb.base()),
             (RunPhase::Deps { .. }, _) => "Missing tools".into(),
             (RunPhase::Setup, _) => "Setup needed".into(),
@@ -2901,6 +2902,25 @@ mod tests {
         // install of an installed program is a repair
         s.begin_progress(&Command::Install { name: "ts6tray".into(), branch: None });
         assert_eq!(s.progress["ts6tray"].verb, Verb::Repair);
+    }
+
+    /// The "show it again" label of a hidden failed run reads "X: <verb> failed"; delete data says
+    /// "deleting data failed" (not "delete data of failed").
+    #[test]
+    fn reopen_label_of_a_failed_run() {
+        for (cmd, want) in [
+            (Command::DeleteData { name: "ritz".into() }, "Ritz: deleting data failed"),
+            (Command::Reset { name: "ritz".into() }, "Ritz: reset failed"),
+        ] {
+            let mut a = loaded();
+            a.queue.push_back(cmd.clone());
+            a.next_to_start();
+            a.handle_event(fin(cmd, ExitKind::Failed, Captured::default()));
+            assert!(matches!(a.state.run.as_ref().map(|r| &r.phase), Some(RunPhase::Failed { .. })));
+            assert_eq!(a.state.reopen_label(), None, "the dialog is showing");
+            a.state.modal = None;
+            assert_eq!(a.state.reopen_label().as_deref(), Some(want));
+        }
     }
 
     /// Esc / backdrop on the progress dialog: while it runs = Run in background (the run stays and can

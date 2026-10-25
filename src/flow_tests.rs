@@ -5,9 +5,10 @@
 //! header of `tests/fake-ritz-get`).
 //!
 //! Checks (plan "Done when"):
-//! * startup runs `dir`, `list --offline --porcelain`, THEN `list --porcelain`, `shortcuts`;
+//! * startup runs `dir`, `list --offline --porcelain --data`, THEN `list --porcelain --data`, `shortcuts`
+//!   (every list carries `--data`; an old ritz-get that exits 2 on it is asked again without);
 //! * every call has `gui=1` and `tty=0`; only install / remove / switch / reset have
-//!   `sudo=pkexec`; `update`, `reset` and `dir PATH` always carry `--yes`;
+//!   `sudo=pkexec` (`delete-data` never does); `update`, `reset` and `dir PATH` always carry `--yes`;
 //! * the shortcut action is `shortcut NAME` for column `off`, `shortcut NAME --remove` for `on`,
 //!   and the action list offers none for `-`;
 //! * no two calls overlap;
@@ -262,7 +263,7 @@ fn run_until(r: &mut Rig, cond: impl Fn(&AppState) -> bool) {
     }
 }
 
-const STARTUP: [&str; 4] = ["dir", "list --offline --porcelain", "list --porcelain", "shortcuts"];
+const STARTUP: [&str; 4] = ["dir", "list --offline --porcelain --data", "list --porcelain --data", "shortcuts"];
 
 #[test]
 fn startup_runs_offline_list_then_online_list() {
@@ -272,7 +273,7 @@ fn startup_runs_offline_list_then_online_list() {
     assert_eq!(argvs(&calls), STARTUP);
     // `list --offline --porcelain` strictly before `list --porcelain`.
     let pos = |a: &str| calls.iter().position(|c| c.argv == a).unwrap();
-    assert!(pos("list --offline --porcelain") < pos("list --porcelain"));
+    assert!(pos("list --offline --porcelain --data") < pos("list --porcelain --data"));
     assert!(calls.iter().all(|c| c.exit == 0));
     assert_call_invariants(&calls);
 
@@ -306,7 +307,7 @@ fn every_action_makes_the_right_call() {
     assert_eq!(create, Action::Shortcut { name: "ccorral".into(), remove: false });
     assert_eq!(remove, Action::Shortcut { name: "yt-dlp-gui".into(), remove: true });
 
-    const REFRESH: &str = "list --porcelain";
+    const REFRESH: &str = "list --porcelain --data";
     let mut expected: Vec<String> = STARTUP.iter().map(|s| (*s).to_owned()).collect();
     let mut step = |r: &mut Rig, a: Action, argv: &[&str]| {
         r.click(a);
@@ -322,6 +323,7 @@ fn every_action_makes_the_right_call() {
     step(&mut r, Action::Reset { name: "geofinder".into() }, &["reset geofinder --yes", REFRESH]);
     step(&mut r, Action::Hold { name: "ccorral".into() }, &["hold ccorral", REFRESH]);
     step(&mut r, Action::Unhold { name: "yt-dlp-gui".into() }, &["unhold yt-dlp-gui", REFRESH]);
+    step(&mut r, Action::DeleteData { name: "ritz".into() }, &["delete-data ritz --yes", REFRESH]);
     step(&mut r, create, &["shortcut ccorral", REFRESH]);
     step(&mut r, remove, &["shortcut yt-dlp-gui --remove", REFRESH]);
     step(&mut r, Action::Open { name: "walters-knaggertreff".into() }, &["open walters-knaggertreff"]);
@@ -342,6 +344,7 @@ fn every_action_makes_the_right_call() {
     assert_eq!(call("reset geofinder --yes").sudo, "pkexec");
     assert_eq!(call("update --yes").sudo, "-");
     assert_eq!(call("shortcut ccorral").sudo, "-");
+    assert_eq!(call("delete-data ritz --yes").sudo, "-");
     assert_eq!(call("dir /srv/ritz --yes").sudo, "-");
     assert_eq!(r.app.state.branches["ts6tray"].len(), 3);
     assert!(r.app.state.actions_enabled());
@@ -513,7 +516,7 @@ fn exit_5_shows_the_busy_message_and_reenables_actions() {
     // And the next action goes through once ritz-get is free again.
     r.click(Action::CloseModal);
     r.click(Action::CheckForUpdates);
-    assert_eq!(r.calls().last().unwrap().argv, "list --porcelain");
+    assert_eq!(r.calls().last().unwrap().argv, "list --porcelain --data");
 }
 
 /// `bad-version.porcelain` (`#porcelain 2`): refused, nothing else runs, and the dialog's
@@ -527,7 +530,7 @@ fn porcelain_2_is_refused_and_the_update_path_works() {
     assert!(r.app.state.listing.sections.is_empty());
     assert!(!r.app.state.actions_enabled());
     // First startup: the online list is dropped after the refusal.
-    assert_eq!(argvs(&r.calls()), ["dir", "list --offline --porcelain", "shortcuts"]);
+    assert_eq!(argvs(&r.calls()), ["dir", "list --offline --porcelain --data", "shortcuts"]);
 
     // A command that is not the self-update is dropped.
     r.click(Action::Update { name: None });
@@ -542,12 +545,12 @@ fn porcelain_2_is_refused_and_the_update_path_works() {
         argvs(&calls),
         [
             "dir",
-            "list --offline --porcelain",
+            "list --offline --porcelain --data",
             "shortcuts",
             "update ritz-get-gui --yes",
             "dir",
-            "list --offline --porcelain",
-            "list --porcelain",
+            "list --offline --porcelain --data",
+            "list --porcelain --data",
             "shortcuts",
         ]
     );
@@ -601,7 +604,7 @@ fn install_with_off_shortcut_asks_and_add_creates_it() {
         let argv = argvs(&calls);
         let n = argv.len();
         assert_eq!(argv[n - 4], if matches!(action, Action::Install { branch: Some(_), .. }) { "install ritz --branch dev" } else { "install ritz" });
-        assert_eq!(argv[n - 3..], ["list --porcelain", "shortcut ritz", "list --porcelain"]);
+        assert_eq!(argv[n - 3..], ["list --porcelain --data", "shortcut ritz", "list --porcelain --data"]);
         assert!(r.app.state.modal.is_none() && r.app.state.run.is_none());
         assert_call_invariants(&calls);
     }
@@ -616,7 +619,7 @@ fn install_with_off_shortcut_not_now_makes_no_call() {
     assert!(r.app.state.modal.is_none() && r.app.state.run.is_none());
     let calls = r.calls();
     assert!(!calls.iter().any(|c| c.argv.starts_with("shortcut ")), "{:?}", argvs(&calls));
-    assert_eq!(argvs(&calls)[STARTUP.len()..], ["install ritz", "list --porcelain"]);
+    assert_eq!(argvs(&calls)[STARTUP.len()..], ["install ritz", "list --porcelain --data"]);
 }
 
 /// Column 17 `-` (no .desktop) or already `on`: never asked; the Done state is just the result.
@@ -636,7 +639,7 @@ fn repair_does_not_ask() {
     let mut r = Rig::new_with("ok", "full.porcelain", Some(("ts6tray", "off")));
     r.start();
     r.click(Action::Repair { name: "ts6tray".into() });
-    assert_eq!(argvs(&r.calls())[STARTUP.len()..], ["install ts6tray", "list --porcelain"]);
+    assert_eq!(argvs(&r.calls())[STARTUP.len()..], ["install ts6tray", "list --porcelain --data"]);
     assert_eq!(r.find("ts6tray").shortcut, ShortcutState::Off, "the refreshed listing does say off");
     assert_eq!(phase(&r), Some(RunPhase::Done { menu: false }));
     assert_eq!(r.app.state.run.as_ref().map(|x| x.verb), Some(Verb::Repair));
@@ -842,7 +845,7 @@ fn queries_do_not_disable_actions_and_a_click_queues_behind_them() {
     assert!(!r.app.state.actions_enabled(), "a mutating command is waiting: now they are off");
     r.drive();
     let calls = r.calls();
-    assert_eq!(argvs(&calls)[STARTUP.len()..], ["branches ritz", "install ritz", "list --porcelain"]);
+    assert_eq!(argvs(&calls)[STARTUP.len()..], ["branches ritz", "install ritz", "list --porcelain --data"]);
     assert_call_invariants(&calls);
     assert_eq!(r.app.state.modal, Some(Modal::Run), "the queued install opened its dialog when it started");
     assert!(r.app.state.actions_enabled());
@@ -1198,4 +1201,146 @@ fn single_install_counts_one_of_one() {
     assert_eq!(r.app.state.marks.seg, (1, 1));
     assert_eq!(r.app.state.progress["ritz"].phase, Progress::Done);
     assert!(r.app.state.log.iter().all(|l| !l.text.starts_with('#')));
+}
+
+// ---- delete program data (`list --data`, `delete-data NAME --yes`) -----------------------------------
+
+fn data_paths(r: &Rig, name: &str) -> Vec<String> {
+    r.find(name).data.iter().map(|d| d.path.clone()).collect()
+}
+
+fn delete_data(name: &str) -> Action {
+    Action::DeleteData { name: name.into() }
+}
+
+/// An old ritz-get answers `list --data` with exit 2: the app asks the same list again without it
+/// (at the front of the queue), shows no error, and every later list goes without `--data`.
+#[test]
+fn old_ritz_get_without_data_flag_falls_back_silently() {
+    let mut r = Rig::new_env("ok", "full.porcelain", None, "FAKE_RITZ_GET_NO_DATA_FLAG=1");
+    r.start();
+    let calls = r.calls();
+    // The offline list fails with exit 2 and is retried at once without `--data`; the online list
+    // behind it was already rewritten to go without it.
+    assert_eq!(
+        argvs(&calls),
+        ["dir", "list --offline --porcelain --data", "list --offline --porcelain", "list --porcelain", "shortcuts"]
+    );
+    assert_eq!(calls.iter().map(|c| c.exit).collect::<Vec<_>>(), [0, 2, 0, 0, 0]);
+    assert_call_invariants(&calls);
+    let s = &r.app.state;
+    assert!(r.app.no_data_flag);
+    // No error line. (The old CLI's stderr line is echoed as plain Info text: that is all the log gets.)
+    assert!(!s.log.iter().any(|l| l.kind == LogKind::Err), "no error is surfaced: {:?}", s.log);
+    assert!(s.log.iter().all(|l| l.kind == LogKind::Info && l.text == "ritz-get: unknown option: --data"), "{:?}", s.log);
+    assert!(s.listing.entries().count() >= 17 && s.checked_at.is_some() && s.actions_enabled());
+    assert!(!s.ritz_get_missing && s.refused.is_none());
+    assert!(s.listing.entries().all(|e| e.data.is_empty()), "no data without the flag");
+
+    // Later lists (a mutation's refresh, Check for updates) stay without `--data`.
+    r.click(Action::Hold { name: "ccorral".into() });
+    r.click(Action::CheckForUpdates);
+    let calls = r.calls();
+    assert_eq!(argvs(&calls)[5..], ["hold ccorral", "list --porcelain", "list --porcelain"]);
+    assert!(!calls.iter().skip(2).any(|c| c.argv.contains("--data")));
+    assert_call_invariants(&calls);
+    assert!(!r.app.state.log.iter().any(|l| l.kind == LogKind::Err), "{:?}", r.app.state.log);
+}
+
+/// ritz has two data folders after startup; deleting them runs `delete-data ritz --yes` (never
+/// sudo), the dialog ends Done, and the refreshed listing has no data left for ritz.
+#[test]
+fn delete_data_succeeds_and_the_refresh_drops_it() {
+    let mut r = Rig::new("ok", "full.porcelain");
+    r.start();
+    assert_eq!(data_paths(&r, "ritz"), ["~/.config/ritz", "~/.local/share/ritz"]);
+    assert!(!r.find("ritz").is_installed());
+
+    r.click(delete_data("ritz"));
+    let s = &r.app.state;
+    assert_eq!(s.modal, Some(Modal::Run));
+    assert_eq!(s.run.as_ref().map(|x| x.verb), Some(Verb::DeleteData));
+    assert_eq!(phase(&r), Some(RunPhase::Done { menu: false }));
+    assert!(s.log.iter().any(|l| l.kind == LogKind::Ok && l.text == "ritz: data deleted"), "{:?}", s.log);
+    assert!(!s.log.iter().any(|l| l.kind == LogKind::Err), "{:?}", s.log);
+    assert!(s.actions_enabled());
+    assert!(r.find("ritz").data.is_empty(), "the refreshed listing has no data left");
+    assert_eq!(r.find("ritz").data_label(), None);
+    assert_eq!(data_paths(&r, "SteamAlt"), ["~/.config/SteamAlt"], "other programs keep theirs");
+
+    let calls = r.calls();
+    assert_eq!(argvs(&calls)[STARTUP.len()..], ["delete-data ritz --yes", "list --porcelain --data"]);
+    let c = calls.iter().find(|c| c.argv == "delete-data ritz --yes").unwrap();
+    assert_eq!((c.exit, c.sudo.as_str()), (0, "-"));
+    assert_call_invariants(&calls);
+}
+
+/// An installed program keeps its data: exit 1, "uninstall first", and the listing is unchanged.
+#[test]
+fn delete_data_of_an_installed_program_is_refused() {
+    let mut r = Rig::new("ok", "full.porcelain");
+    r.start();
+    assert!(r.find("SteamAlt").is_installed());
+    let before = data_paths(&r, "SteamAlt");
+    assert_eq!(before, ["~/.config/SteamAlt"]);
+    r.click(delete_data("SteamAlt"));
+    assert_eq!(phase(&r), Some(RunPhase::Failed { reason: "uninstall first: ritz-get remove SteamAlt".into() }));
+    assert_eq!(r.app.state.modal, Some(Modal::Run));
+    assert_eq!(data_paths(&r, "SteamAlt"), before, "its data is unchanged");
+    let calls = r.calls();
+    let c = calls.iter().find(|c| c.argv.starts_with("delete-data")).unwrap();
+    assert_eq!((c.argv.as_str(), c.exit, c.sudo.as_str()), ("delete-data SteamAlt --yes", 1, "-"));
+    assert_call_invariants(&calls);
+    assert!(r.app.state.actions_enabled());
+}
+
+/// Exit 5: the Busy phase and no refresh.
+#[test]
+fn delete_data_busy_shows_busy_and_refreshes_nothing() {
+    let mut r = Rig::new("busy", "full.porcelain");
+    r.start();
+    let before = r.calls().len();
+    r.click(delete_data("ritz"));
+    assert_eq!(phase(&r), Some(RunPhase::Busy));
+    let calls = r.calls();
+    assert_eq!(calls.len(), before + 1, "busy refreshes nothing: {:?}", argvs(&calls));
+    let c = calls.last().unwrap();
+    assert_eq!((c.argv.as_str(), c.exit, c.sudo.as_str()), ("delete-data ritz --yes", 5, "-"));
+    assert_eq!(data_paths(&r, "ritz").len(), 2, "nothing was deleted");
+    assert!(r.app.state.actions_enabled() && !r.app.state.busy);
+    assert_call_invariants(&calls);
+}
+
+/// SCENARIO=failed (exit 1 for every changing command): the dialog ends Failed.
+#[test]
+fn delete_data_failed_scenario_ends_failed() {
+    let mut r = Rig::new("failed", "full.porcelain");
+    r.start();
+    r.click(delete_data("ritz"));
+    assert!(matches!(phase(&r), Some(RunPhase::Failed { .. })), "{:?}", phase(&r));
+    assert_eq!(r.calls().iter().find(|c| c.argv == "delete-data ritz --yes").map(|c| c.exit), Some(1));
+    assert_call_invariants(&r.calls());
+}
+
+/// Dispatched twice (the action is only offered while data exists, but a stale click can happen):
+/// the second run is "ritz: no data left", exit 0, and ends Done.
+#[test]
+fn delete_data_twice_says_no_data_left() {
+    let mut r = Rig::new("ok", "full.porcelain");
+    r.start();
+    r.click(delete_data("ritz"));
+    r.click(Action::CloseModal);
+    r.click(delete_data("ritz"));
+    assert_eq!(phase(&r), Some(RunPhase::Done { menu: false }));
+    let s = &r.app.state;
+    assert!(s.log.iter().any(|l| l.kind == LogKind::Ok && l.text == "ritz: no data left"), "{:?}", s.log);
+    assert!(!s.log.iter().any(|l| l.kind == LogKind::Err), "{:?}", s.log);
+    assert!(r.find("ritz").data.is_empty());
+    let calls = r.calls();
+    assert_eq!(
+        argvs(&calls)[STARTUP.len()..],
+        ["delete-data ritz --yes", "list --porcelain --data", "delete-data ritz --yes", "list --porcelain --data"]
+    );
+    assert!(calls.iter().all(|c| c.exit == 0));
+    assert_call_invariants(&calls);
 }

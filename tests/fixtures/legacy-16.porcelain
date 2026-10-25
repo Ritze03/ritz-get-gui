@@ -2,6 +2,8 @@
 #online 1
 E	Software	yt-dlp-gui	yt-dlp GUI	program	Ritze03/yt-dlp-gui	installed	behind	1	main	2026-10-14 3f9e21a	2026-10-21 c84d0b7	3	0	0	Lean Go + Gio desktop GUI for yt-dlp
 E	Software	ritz	Ritz	program	Ritze03/ritz	available	-	0	-	-	9e24960	-	-	-	Linux Steam launch wrapper
+D	ritz	~/.config/ritz	12288
+D	ritz	~/.local/share/ritz	2048
 E	Software	ForzaTelemetryV3Launcher	Forza Telemetry V3 Launcher	program	Ritze03/ForzaTelemetryV3Launcher	available	-	0	master	-	433d3ad	-	-	-	Launcher for Forza Telemetry V3: keeps it up to date, builds and runs it
 E	Software	ForzaTelemetryV3	Forza Telemetry V3	program	Ritze03/ForzaTelemetryV3	available	-	0	-	-	1821a51	-	-	-	Live telemetry dashboard for Forza Horizon (the app itself, no launcher)
 S	ForzaTelemetryV3	Hotkeys, gearbox and backfire need the input group: sudo usermod -aG input $USER, then log in again
@@ -10,6 +12,7 @@ S	simple-screensharing	Needs PipeWire (incl. pw-loopback) and GStreamer plugins 
 S	simple-screensharing	Needs a relay: self-host from this repo, or use a friend's; the app takes a join link
 E	Software	geofinder	Geofinder	program	Ritze03/geofinder	installed	modified	0	main	2026-10-01 2d81f06	2026-10-08 9c44d1a	3	3	0	Geobingo-style multiplayer party game with real Google and Apple Maps
 E	Software	SteamAlt	Steam Userdata Copier	program	Ritze03/SteamAlt	installed	current	0	main	2026-10-17 8a3f1c9	2026-10-17 8a3f1c9	0	0	0	Copy Steam game saves and settings between accounts on one PC
+D	SteamAlt	~/.config/SteamAlt	340
 E	Software	gamescope-ritz	Gamescope Ritz	program	Ritze03/gamescope-ritz	installed	current	0	main	2026-10-09 0b7c5e2	2026-10-09 0b7c5e2	0	0	0	SteamOS session compositing window manager, with added features
 S	gamescope-ritz	Ritz users: copy its Ritz module by hand, see https://github.com/Ritze03/gamescope-ritz#quick-start
 E	Helpers	ritz-get	ritz-get	program	Ritze03/ritz-get	installed	current	0	main	2026-10-22 a596443	2026-10-22 a596443	0	0	0	Install, update and remove Ritze03's programs, built from source
