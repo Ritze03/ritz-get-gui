@@ -146,6 +146,14 @@ fn hero(ui: &mut egui::Ui, state: &AppState, e: &Entry, actions: &mut Vec<Action
                 ui.add(egui::Label::new(RichText::new(&e.desc).size(12.0).color(theme::DIM)).halign(Align::Center));
             });
         }
+        if let Some(text) = data_left_line(e) {
+            ui.add_space(6.0);
+            let w = avail.min(240.0);
+            ui.allocate_ui_with_layout(vec2(w, 0.0), Layout::top_down(Align::Center), |ui| {
+                ui.add(egui::Label::new(RichText::new(text).size(12.0).color(theme::DIM)).halign(Align::Center))
+                    .on_hover_text(data_tooltip(e));
+            });
+        }
         ui.add_space(4.0);
     });
 
@@ -164,6 +172,27 @@ fn hero(ui: &mut egui::Ui, state: &AppState, e: &Entry, actions: &mut Vec<Action
             actions.push(Action::OpenUrl(url));
         }
     }
+}
+
+/// "Data left: 2 folders, 14 MB": a program that is not installed but still has data on disk.
+fn data_left_line(e: &Entry) -> Option<String> {
+    if e.is_installed() || e.is_website() {
+        return None;
+    }
+    e.data_label().map(|l| format!("Data left: {l}"))
+}
+
+/// Hover text of the data line / Data row: one `path (size)` per line.
+fn data_tooltip(e: &Entry) -> String {
+    let lines: Vec<String> = e
+        .data
+        .iter()
+        .map(|d| match d.kb {
+            Some(kb) => format!("{} ({})", d.path, crate::model::fmt_kb(kb)),
+            None => d.path.clone(),
+        })
+        .collect();
+    lines.join("\n")
 }
 
 fn plural(n: u32, one: &str, many: &str) -> String {
@@ -469,12 +498,21 @@ fn detail_rows(state: &AppState, e: &Entry) -> Vec<(&'static str, String)> {
     if let Some(n) = e.dirty.filter(|n| *n > 0) {
         rows.push(("local", plural(n, "changed file", "changed files")));
     }
+    // Not installed: the hero's "Data left" line already says it.
+    if let (true, Some(l)) = (e.is_installed(), e.data_label()) {
+        rows.push(("Data", l));
+    }
     rows
 }
 
-/// Hover text of a Details row: the full URL behind the website `url` row.
-fn detail_tooltip<'a>(e: &'a Entry, label: &str) -> Option<&'a str> {
-    if label == "url" { e.website_url() } else { None }
+/// Hover text of a Details row: the full URL behind the website `url` row, the data paths behind
+/// the `Data` row.
+fn detail_tooltip(e: &Entry, label: &str) -> Option<String> {
+    match label {
+        "url" => e.website_url().map(str::to_owned),
+        "Data" => Some(data_tooltip(e)),
+        _ => None,
+    }
 }
 
 fn details(ui: &mut egui::Ui, state: &AppState, e: &Entry) {
@@ -562,7 +600,13 @@ fn groups(state: &AppState, e: &Entry) -> Vec<Vec<Item>> {
         local.push(off(glyph::FOLDER, "Open folder"));
         let mut gh = Vec::new();
         github_items(e, &mut gh);
-        vec![vec![cmd_item(state, glyph::DOWNLOAD, "Install", Action::Install { name: name(), branch: None })], local, gh]
+        // Leftover data of a removed program (an installed one must be removed first).
+        let data: Vec<Item> = if e.data.is_empty() {
+            Vec::new()
+        } else {
+            vec![danger(cmd_item(state, glyph::TRASH, "Delete data\u{2026}", Action::ShowModal(Modal::DeleteData { id: e.id() })))]
+        };
+        vec![vec![cmd_item(state, glyph::DOWNLOAD, "Install", Action::Install { name: name(), branch: None })], local, gh, data]
     } else {
         let mut life = Vec::new();
         if e.has_update() {
@@ -833,7 +877,7 @@ mod tests {
         let rows = detail_rows(&s, e);
         let url = rows.iter().find(|(l, _)| *l == "url").expect("url row");
         assert_eq!(url.1, "ritze03.github.io/stupid-pages/cs2-multimap-generator.html");
-        assert_eq!(detail_tooltip(e, "url"), e.website_url());
+        assert_eq!(detail_tooltip(e, "url").as_deref(), e.website_url());
         assert!(detail_tooltip(e, "id").is_none());
     }
 
@@ -861,6 +905,64 @@ mod tests {
                 Some(Action::Update { .. } | Action::Repair { .. } | Action::Remove { .. } | Action::Shortcut { .. })
             );
             assert_eq!(it.enabled, !is_cmd, "{}", it.text);
+        }
+    }
+
+    #[test]
+    fn delete_data_is_offered_only_for_a_not_installed_program_with_data() {
+        let s = st();
+        let del = |s: &AppState, id: &str| groups(s, find(s, id)).into_iter().flatten().find(|i| i.text == "Delete data\u{2026}");
+        let modal = Action::ShowModal(Modal::DeleteData { id: "Software/ritz".into() });
+        let it = del(&s, "Software/ritz").expect("ritz: not installed, has data");
+        assert!(it.danger && it.enabled);
+        assert_eq!(it.glyph, glyph::TRASH);
+        assert_eq!(it.action, Some(modal.clone()));
+        assert!(offered_actions(&s, find(&s, "Software/ritz")).contains(&modal));
+        // its own last group, after Install / local / GitHub
+        let g = groups(&s, find(&s, "Software/ritz"));
+        assert_eq!(texts(&g[g.len() - 1..]), vec![vec!["Delete data\u{2026}"]]);
+        assert!(del(&s, "Software/SteamAlt").is_none(), "installed: remove it first");
+        assert!(del(&s, "Websites/cs2-alias-cycling").is_none());
+        assert!(del(&s, "Software/ForzaTelemetryV3Launcher").is_none(), "no data");
+        assert!(del(&s, "Unlisted/old-experiment").is_none());
+        // disabled like the other commands while one runs
+        let mut busy = st();
+        busy.busy = true;
+        assert!(!del(&busy, "Software/ritz").unwrap().enabled);
+    }
+
+    #[test]
+    fn data_row_for_installed_programs_and_data_left_line_for_missing_ones() {
+        let s = st();
+        let rows = detail_rows(&s, find(&s, "Software/SteamAlt"));
+        assert!(rows.contains(&("Data", "1 folder, 340 KB".to_owned())), "{rows:?}");
+        assert!(!detail_rows(&s, find(&s, "Software/ritz")).iter().any(|r| r.0 == "Data"), "the hero says it");
+        assert!(!detail_rows(&s, find(&s, "Helpers/ts6tray")).iter().any(|r| r.0 == "Data"));
+        assert_eq!(data_left_line(find(&s, "Software/ritz")).as_deref(), Some("Data left: 2 folders, 14 MB"));
+        assert_eq!(data_left_line(find(&s, "Software/SteamAlt")), None);
+        assert_eq!(data_tooltip(find(&s, "Software/ritz")), "~/.config/ritz (12 MB)\n~/.local/share/ritz (2 MB)");
+    }
+
+    #[test]
+    fn side_panel_paints_the_data_left_line_at_every_width() {
+        let s = st();
+        let e = find(&s, "Software/ritz");
+        for w in [300.0_f32, 240.0] {
+            let ctx = crate::ui::test_render::context();
+            let (out, _) = crate::ui::test_render::run(&ctx, w, 900.0, |ui| {
+                let mut actions = Vec::new();
+                body(ui, &s, e, &mut actions);
+            });
+            let text: Vec<String> = out
+                .shapes
+                .iter()
+                .filter_map(|c| match &c.shape {
+                    egui::Shape::Text(t) => Some(t.galley.text().to_owned()),
+                    _ => None,
+                })
+                .collect();
+            assert!(text.iter().any(|t| t == "Data left: 2 folders, 14 MB"), "{w}px: {text:?}");
+            assert!(text.iter().any(|t| t == "Delete data\u{2026}"), "{w}px: {text:?}");
         }
     }
 
