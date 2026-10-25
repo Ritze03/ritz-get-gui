@@ -21,14 +21,25 @@
 #                                  and every later `list` prints this file instead (marker: <file>.done, delete it to reset)
 #   FAKE_RITZ_GET_INSTALLED_FIXTURE  porcelain file; once set, a successful `install NAME` makes every later `list` print
 #                                  this file instead (marker: <file>.installed, delete it to reset). `remove` is unaffected.
+#   FAKE_RITZ_GET_NO_DATA_FLAG     set (non-empty): `list ... --data` behaves like an old ritz-get: nothing on stdout,
+#                                  `ritz-get: unknown option: --data` on stderr, exit 2 (the GUI falls back to plain list).
+#   Data records: fixtures may carry `D<TAB>NAME<TAB>PATH<TAB>KB` lines (after the entry's E and S lines). `list` strips
+#   every D line unless `--data` is given (so the output without --data is byte-identical to a D-free fixture); with
+#   --data it prints them, except the D lines of programs whose data was deleted. `delete-data NAME --yes` records NAME in
+#   the marker file $FAKE_RITZ_GET_DIR/.data-deleted (default dir $HOME/.local/share/ritz-get; one name per line; delete
+#   the file to reset). The shot rig's dir is per launch, so the marker starts empty there.
 #
-# Commands: list [--offline] --porcelain [--all] | branches NAME | install NAME [--branch B]
-#   | update [NAME] --yes | remove NAME | switch NAME BRANCH | reset NAME --yes | hold NAME | unhold NAME
+# Commands: list [--offline] --porcelain [--all] [--data] | branches NAME | install NAME [--branch B]
+#   | update [NAME] --yes | remove NAME | delete-data NAME --yes | switch NAME BRANCH | reset NAME --yes | hold NAME | unhold NAME
 #   | open NAME | shortcut NAME [--remove] | shortcuts [PATH] | dir [PATH [--yes]]
 #   install takes several NAMEs (M = their number); an unknown name (`nosuch`) prints the error between its pair.
 #   update NAME / switch / reset: one pair, 1/1. Plain `update`: phase 1 prints the result lines of the programs
 #   it will not touch (no markers), phase 2 the apply list (`#start`, result, `#progress`).
 #   update and reset exit 2 without --yes (stdin is never a terminal for the GUI).
+#   delete-data NAME --yes (one pair, 1/1; exit 2 without --yes or NAME), judged against the fixture `list` would print:
+#   installed -> `NAME: FAILED (uninstall first: ritz-get remove NAME)` exit 1; website -> `NAME: a website has no data`;
+#   unknown NAME -> `NAME: unknown program` (stderr) exit 1; no D line left -> `NAME: no data left`;
+#   otherwise marker + `NAME: data deleted`. Scenario failed -> `NAME: FAILED (cannot delete data)` exit 1; busy -> exit 5.
 #
 # Call log (FAKE_RITZ_GET_LOG), one line appended when the invocation ends:
 #   start=<epoch.nanos> end=<epoch.nanos> exit=<n> gui=<RITZ_GET_GUI or -> sudo=<RITZ_GET_SUDO or -> tty=<0|1> argv=<args space-joined>
@@ -104,32 +115,46 @@ scenario_fail() {
     esac
 }
 
+# Sets $fixture to what `list` prints (the offline one if $1 = 1), with the INSTALLED/REMOVED swaps applied.
+pick_fixture() {
+    fixture=${FAKE_RITZ_GET_FIXTURE:-$script_dir/fixtures/full.porcelain}
+    if [ "${1:-0}" = 1 ]; then
+        fixture=${FAKE_RITZ_GET_OFFLINE_FIXTURE:-$fixture}
+    fi
+    if [ -n "${FAKE_RITZ_GET_INSTALLED_FIXTURE:-}" ] && [ -e "$FAKE_RITZ_GET_INSTALLED_FIXTURE.installed" ]; then
+        fixture=$FAKE_RITZ_GET_INSTALLED_FIXTURE
+    fi
+    if [ -n "${FAKE_RITZ_GET_REMOVED_FIXTURE:-}" ] && [ -e "$FAKE_RITZ_GET_REMOVED_FIXTURE.done" ]; then
+        fixture=$FAKE_RITZ_GET_REMOVED_FIXTURE
+    fi
+    [ -r "$fixture" ] || die "fake-ritz-get: cannot read fixture $fixture"
+}
+data_marker() { printf '%s/.data-deleted\n' "${FAKE_RITZ_GET_DIR:-$HOME/.local/share/ritz-get}"; }
+
 [ $# -ge 1 ] || usage "COMMAND"
 cmd=$1; shift
 
 case $cmd in
     list)
-        offline=0; porcelain=0
+        offline=0; porcelain=0; data=0
         for a in "$@"; do
             case $a in
                 --offline) offline=1 ;;
                 --porcelain) porcelain=1 ;;
+                --data) data=1 ;;
                 *) ;;
             esac
         done
-        [ $porcelain = 1 ] || usage "list [--offline] --porcelain [--all]"
-        fixture=${FAKE_RITZ_GET_FIXTURE:-$script_dir/fixtures/full.porcelain}
-        if [ $offline = 1 ]; then
-            fixture=${FAKE_RITZ_GET_OFFLINE_FIXTURE:-$fixture}
+        [ $porcelain = 1 ] || usage "list [--offline] --porcelain [--all] [--data]"
+        if [ $data = 1 ] && [ -n "${FAKE_RITZ_GET_NO_DATA_FLAG:-}" ]; then
+            die "ritz-get: unknown option: --data" 2
         fi
-        if [ -n "${FAKE_RITZ_GET_INSTALLED_FIXTURE:-}" ] && [ -e "$FAKE_RITZ_GET_INSTALLED_FIXTURE.installed" ]; then
-            fixture=$FAKE_RITZ_GET_INSTALLED_FIXTURE
-        fi
-        if [ -n "${FAKE_RITZ_GET_REMOVED_FIXTURE:-}" ] && [ -e "$FAKE_RITZ_GET_REMOVED_FIXTURE.done" ]; then
-            fixture=$FAKE_RITZ_GET_REMOVED_FIXTURE
-        fi
-        [ -r "$fixture" ] || die "fake-ritz-get: cannot read fixture $fixture"
-        cat "$fixture"
+        pick_fixture $offline
+        # D lines: dropped without --data; with --data dropped for programs named in the deleted-data marker
+        awk -F'\t' -v data=$data -v m="$(data_marker)" '
+            BEGIN { while ((getline l < m) > 0) del[l] = 1 }
+            $1 == "D" { if (data && !($2 in del)) print; next }
+            { print }' "$fixture"
         ;;
     branches)
         [ $# -ge 1 ] || usage "branches NAME"
@@ -215,6 +240,52 @@ case $cmd in
         fi
         say "Removing $1 ..."
         say "Removed $1"
+        ;;
+    delete-data)
+        name=; yes=0
+        for a in "$@"; do
+            case $a in
+                --yes) yes=1 ;;
+                -*) ;;
+                *) [ -n "$name" ] || name=$a ;;
+            esac
+        done
+        [ -n "$name" ] || usage "delete-data NAME --yes"
+        [ $yes = 1 ] || die "delete-data needs --yes when stdin is not a terminal" 2
+        lock
+        mstart "$name"
+        if [ "$scenario" = failed ]; then
+            say "$name: FAILED (cannot delete data)"
+            mprog "$name" 1 1
+            exit 1
+        fi
+        pick_fixture 0
+        kind=$(awk -F'\t' -v n="$name" '$1=="E" && $3==n { print $5 "/" $7; exit }' "$fixture")
+        case $kind in
+            "")
+                err "$name: unknown program"
+                mprog "$name" 1 1
+                exit 1 ;;
+            website/*)
+                say "$name: a website has no data" ;;
+            */installed)
+                say "$name: FAILED (uninstall first: ritz-get remove $name)"
+                mprog "$name" 1 1
+                exit 1 ;;
+            *)
+                marker=$(data_marker)
+                if awk -F'\t' -v n="$name" -v m="$marker" '
+                        BEGIN { while ((getline l < m) > 0) if (l == n) gone = 1 }
+                        !gone && $1=="D" && $2==n { found = 1 }
+                        END { exit !found }' "$fixture"; then
+                    mkdir -p "$(dirname "$marker")"
+                    printf '%s\n' "$name" >> "$marker"
+                    say "$name: data deleted"
+                else
+                    say "$name: no data left"
+                fi ;;
+        esac
+        mprog "$name" 1 1
         ;;
     switch)
         [ $# -ge 2 ] || usage "switch NAME BRANCH"

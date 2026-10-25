@@ -10,7 +10,7 @@
 #   scripts/shot.sh [--bin PATH] [--host NAME] [--states "s1 s2 ..."] [--widths "WxH ..."]
 #                   [--fixture PATH] [--ritz-get PATH] [--cache-seed DIR] [--relaunch-all]
 #                   [--out DIR] [--settle SECS] [--tall "state ..."] [--tall-size WxH]
-#                   [--build] [--allow-stale] [--remove-icon ID] [--scale S]
+#                   [--build] [--allow-stale] [--remove-icon ID] [--scale S] [--no-web-icons]
 #   scripts/shot.sh --check          only verify prerequisites, print install hints
 #
 # Output: <out>/<state>-<W>.png (state names: '/' and '=' become '-'), <out>/calls-<state>.log.
@@ -22,7 +22,9 @@
 # install-done=ID` (the 2a "Add it to the start menu?" card) `install-failed=ID install-deps=ID deps-none=ID updateall-running
 # updateall-done` (+ `install-hidden=ID updateall-hidden`: after "Run in background"), `log` (the log dialog; `logerr` is the same log without the dialog), the I14 hook specs `needs empty`
 # (`deps=ID` = `install-deps=ID`, `startmenu=ID` = `install-done=ID`), the QC hook specs `setupneeded=ID` (side panel "Setup needed" card)
-# and `select=Unlisted/old-experiment` (Unlisted card), and three
+# and `select=Unlisted/old-experiment` (Unlisted card), the delete-data hook specs `dataleft=ID` (selects ID: the card and side
+# panel show "Data left", default Software/ritz; env ID_DATA) and `deletedata=ID` (the "Delete program data?" confirm modal),
+# and three
 # states that are produced by the real flow instead of a hook (`progress` = a frozen mid-way Update all: per-card bars Updated / Skipped / Up to date / FAILED / Updating... / Queued):
 #   offline    the app runs against tests/fixtures/offline.porcelain (`#online 0`, state offline,
 #              status unknown)
@@ -54,6 +56,8 @@
 #                      pixels_per_point = S (fractional scales go through wp_fractional_scale). The PNGs are
 #                      full physical resolution (grim), named with an `@S` suffix. WIDTHS / --tall-size stay
 #                      logical. Try 1.25, 1.5, 2.
+#   --no-web-icons     don't require the website icons. Default: shot.sh exits 2 when $RITZ_GET_REPO/icons has no *.png
+#                      (RITZ_GET_REPO = a ritz-get checkout, default ../ritz-get), since the websites would silently show letters.
 # Env: LIBGL_ALWAYS_SOFTWARE=1 passes through (set it in VMs without a GPU); SHOT_TIMEOUT (window
 # wait, seconds, default 30); ID_SELECT / ID_MENU / ID_RESET / ID_DEPS ... override the entry ids.
 
@@ -72,14 +76,15 @@ ID_SELECT_WEB="${ID_SELECT_WEB:-Websites/cs2-multimap}"        # website
 ID_MENU_MISSING="${ID_MENU_MISSING:-Software/simple-screensharing}"  # not installed, has setup steps
 ID_SETUPNEEDED="${ID_SETUPNEEDED:-Software/geofinder}"
 ID_UNLISTED="${ID_UNLISTED:-Unlisted/old-experiment}"
+ID_DATA="${ID_DATA:-Software/ritz}"                            # not installed, leftover data (2 folders, 14 MB in the fixture)
 TALL_STATES="select=$ID_RESET needs"; TALL_SIZE=1280x1500
-DEFAULT_STATES="default select=$ID_SELECT select=$ID_UNLISTED setupneeded=$ID_SETUPNEEDED select=$ID_RESET select=$ID_DEPS select=$ID_SELECT_WEB menu=$ID_MENU menu=$ID_MENU_MISSING settings reset=$ID_RESET install-running=$ID_MENU_MISSING install-done=$ID_MENU_MISSING install-failed=$ID_MENU_MISSING install-deps=$ID_DEPS deps-none=$ID_DEPS updateall-running updateall-done install-hidden=$ID_MENU_MISSING updateall-hidden log busy progress progress-single=Helpers/ts6tray restart refused needs empty offline notfound lastfail"
+DEFAULT_STATES="default select=$ID_SELECT select=$ID_UNLISTED setupneeded=$ID_SETUPNEEDED select=$ID_RESET select=$ID_DEPS select=$ID_SELECT_WEB menu=$ID_MENU menu=$ID_MENU_MISSING settings reset=$ID_RESET dataleft=$ID_DATA deletedata=$ID_DATA install-running=$ID_MENU_MISSING install-done=$ID_MENU_MISSING install-failed=$ID_MENU_MISSING install-deps=$ID_DEPS deps-none=$ID_DEPS updateall-running updateall-done install-hidden=$ID_MENU_MISSING updateall-hidden log busy progress progress-single=Helpers/ts6tray restart refused needs empty offline notfound lastfail"
 DEFAULT_WIDTHS="1280x800 900x700 600x800"
 
 BIN="$ROOT/target/release/ritz-get-gui"; HOST=local; STATES="$DEFAULT_STATES"; WIDTHS="$DEFAULT_WIDTHS"
 FIXTURE=""; OUT=""; CHECK=0; SETTLE=1.5; TIMEOUT="${SHOT_TIMEOUT:-30}"
 RITZ_GET_OVERRIDE=""; CACHE_SEED=""; RELAUNCH_ALL=0; REMOVE_ICON=""
-BUILD=0; ALLOW_STALE=0; SCALE=1; WIDTHS_SET=0; STATES_SET=0
+BUILD=0; ALLOW_STALE=0; SCALE=1; WIDTHS_SET=0; STATES_SET=0; NO_WEB_ICONS=0
 
 die() { echo "shot.sh: $*" >&2; exit 2; }
 usage() { awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "${BASH_SOURCE[0]}"; }
@@ -101,6 +106,7 @@ while [[ $# -gt 0 ]]; do
     --build) BUILD=1; shift ;;
     --allow-stale) ALLOW_STALE=1; shift ;;
     --scale) SCALE="${2:?}"; shift 2 ;;
+    --no-web-icons) NO_WEB_ICONS=1; shift ;;
     --check) CHECK=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown argument: $1 (try --help)" ;;
@@ -146,6 +152,9 @@ if [[ $CHECK == 1 ]]; then
   exit $missing
 fi
 [[ $missing == 0 ]] || exit 2
+if [[ $NO_WEB_ICONS == 0 ]] && ! compgen -G "$RITZ_GET_REPO/icons/*.png" >/dev/null; then
+  die "no website icons: $RITZ_GET_REPO/icons/*.png not found, so the websites would show letters. Set RITZ_GET_REPO to a ritz-get checkout (RITZ_GET_REPO=/path/to/ritz-get scripts/shot.sh ...) or pass --no-web-icons."
+fi
 
 # --- fake CLI / fixtures (graceful if absent) ----------------------------------------------------
 FAKE="$ROOT/tests/fake-ritz-get"
@@ -242,6 +251,8 @@ find_art() {  # name owner/repo
   for c in "${RITZ_GET_REPO%/*}/$repo/icon.png" "$REAL_HOME/.local/share/ritz-get/src/$name/icon.png"; do
     [[ -f "$c" ]] && { echo "$c"; return; }
   done
+  # no art: the program honestly shows its letter (warn once per program; this runs in a subshell, so the flag is a file)
+  [[ -e "$RT/noart-$name" ]] || { : >"$RT/noart-$name"; echo "shot.sh: warning: no art found for $name (shows a letter)" >&2; }
 }
 
 # Fake `ritz-get dir`: <dir>/ritz-get/icons/NAME.png (real website icons, copied), the app's own
@@ -327,7 +338,7 @@ run_state() {  # state widths tall(0/1)
   relaunch=$RELAUNCH_ALL
   # A popover closes on resize, and the scroll-to-side-panel of a selection is a one-frame request
   # that only the stacked (< 760 px) layout acts on: those states start fresh at every width.
-  [[ "$state" == menu=* || "$state" == select=* || "$state" == needs || "$state" == setupneeded=* || "$state" == progress-single=* ]] && relaunch=1
+  [[ "$state" == menu=* || "$state" == select=* || "$state" == needs || "$state" == setupneeded=* || "$state" == dataleft=* || "$state" == progress-single=* ]] && relaunch=1
   for wh in $widths; do
     png="$OUT/$name-${wh%x*}$SUFFIX.png"
     [[ $tall == 1 ]] && png="$OUT/$name-$wh$SUFFIX.png"
