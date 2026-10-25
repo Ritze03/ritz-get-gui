@@ -71,6 +71,7 @@ pub fn draw(ctx: &egui::Context, state: &AppState, actions: &mut Vec<Action>) {
     }
     match &state.modal {
         Some(Modal::Reset { id }) => reset(ctx, state, id, actions),
+        Some(Modal::DeleteData { .. }) => {} // drawn by the UI worker
         Some(Modal::Run) => run(ctx, state, actions),
         Some(Modal::Log) => log_modal(ctx, state, actions),
         None => {

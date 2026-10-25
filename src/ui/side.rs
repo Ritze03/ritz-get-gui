@@ -628,7 +628,7 @@ fn progress_row(cp: &CardProgress, life: &mut Vec<Item>) {
                 life.insert(0, row);
             }
         }
-        Verb::Switch | Verb::Reset | Verb::Remove => {}
+        Verb::Switch | Verb::Reset | Verb::Remove | Verb::DeleteData => {}
     }
 }
 

@@ -165,7 +165,28 @@ pub struct SetupStep {
     pub text: String,
 }
 
-/// One `E` record (+ the `S` records after it).
+/// One `D` record: a declared data folder of the program that exists on disk (`list --porcelain --data`).
+/// `path` is in `~/...` form. `kb` is `du -sk` in KiB; `None` when ritz-get sent `-` (du failed).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DataPath {
+    pub path: String,
+    pub kb: Option<u64>,
+}
+
+/// KiB as a short human string: `"340 KB"`, `"14 MB"` (nearest integer, at least 1 MB), `"1.5 GB"`.
+pub fn fmt_kb(kb: u64) -> String {
+    const MB: u64 = 1024;
+    const GB: u64 = 1024 * 1024;
+    if kb < MB {
+        format!("{kb} KB")
+    } else if kb < GB {
+        format!("{} MB", ((kb as f64 / MB as f64).round() as u64).max(1))
+    } else {
+        format!("{:.1} GB", kb as f64 / GB as f64)
+    }
+}
+
+/// One `E` record (+ the `S` and `D` records after it).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
     pub section: String,
@@ -194,9 +215,29 @@ pub struct Entry {
     pub shortcut: ShortcutState,
     /// `S` records, in order. Empty for unlisted entries.
     pub setup: Vec<SetupStep>,
+    /// `D` records, in order: declared data folders that exist (only with `list --data`). Empty otherwise.
+    pub data: Vec<DataPath>,
 }
 
 impl Entry {
+    /// Sum of the known folder sizes in KiB; `None` when there is no data (or no size is known).
+    pub fn data_kb(&self) -> Option<u64> {
+        self.data.iter().filter_map(|d| d.kb).fold(None, |a, k| Some(a.unwrap_or(0) + k))
+    }
+
+    /// `"2 folders, 14 MB"`, `"1 folder, 340 KB"`, `"1 folder"` (all sizes unknown); `None` without data.
+    pub fn data_label(&self) -> Option<String> {
+        if self.data.is_empty() {
+            return None;
+        }
+        let n = self.data.len();
+        let folders = format!("{n} {}", if n == 1 { "folder" } else { "folders" });
+        Some(match self.data_kb() {
+            Some(kb) => format!("{folders}, {}", fmt_kb(kb)),
+            None => folders,
+        })
+    }
+
     /// Stable UI id, `"section/name"` (names can repeat across sections in the mockup, so the
     /// selection, collapse state and `Action::Select` use this, while commands use `name`).
     pub fn id(&self) -> String {
@@ -305,8 +346,8 @@ impl Listing {
 /// `RITZ_GET_SUDO=pkexec` when [`Command::uses_sudo`]) and sets stdin to `/dev/null`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
-    /// `list [--offline] --porcelain [--all]`
-    List { offline: bool, all: bool },
+    /// `list [--offline] --porcelain [--all] [--data]` (`data`: add `D` records; an old ritz-get exits 2)
+    List { offline: bool, all: bool, data: bool },
     /// `install NAME [--branch B]` (repair when installed)
     Install { name: String, branch: Option<String> },
     /// `update [NAME] --yes`
@@ -317,6 +358,8 @@ pub enum Command {
     Switch { name: String, branch: String },
     /// `reset NAME --yes`
     Reset { name: String },
+    /// `delete-data NAME --yes` (uninstalled programs only; never sudo)
+    DeleteData { name: String },
     /// `hold NAME`
     Hold { name: String },
     /// `unhold NAME`
@@ -339,7 +382,7 @@ impl Command {
     pub fn args(&self) -> Vec<String> {
         let s = |x: &str| x.to_owned();
         match self {
-            Command::List { offline, all } => {
+            Command::List { offline, all, data } => {
                 let mut a = vec![s("list")];
                 if *offline {
                     a.push(s("--offline"));
@@ -347,6 +390,9 @@ impl Command {
                 a.push(s("--porcelain"));
                 if *all {
                     a.push(s("--all"));
+                }
+                if *data {
+                    a.push(s("--data"));
                 }
                 a
             }
@@ -369,6 +415,7 @@ impl Command {
             Command::Remove { name } => vec![s("remove"), name.clone()],
             Command::Switch { name, branch } => vec![s("switch"), name.clone(), branch.clone()],
             Command::Reset { name } => vec![s("reset"), name.clone(), s("--yes")],
+            Command::DeleteData { name } => vec![s("delete-data"), name.clone(), s("--yes")],
             Command::Hold { name } => vec![s("hold"), name.clone()],
             Command::Unhold { name } => vec![s("unhold"), name.clone()],
             Command::Open { name } => vec![s("open"), name.clone()],
@@ -425,6 +472,7 @@ impl Command {
             | Command::Remove { name }
             | Command::Switch { name, .. }
             | Command::Reset { name }
+            | Command::DeleteData { name }
             | Command::Hold { name }
             | Command::Unhold { name }
             | Command::Open { name }
@@ -581,6 +629,8 @@ pub enum Badge {
 pub enum Modal {
     /// D22/D32/D61: Cancel is the default; "Open folder" first; red "Discard and reset". `id` = `Entry::id`.
     Reset { id: String },
+    /// Confirm deleting the program's data folders (uninstalled programs). `id` = `Entry::id`.
+    DeleteData { id: String },
     /// The install / update / repair / switch / reset / remove (or Update all) progress dialog; its
     /// content is [`crate::app::AppState::run`]. While the command runs, Esc / backdrop = "Run in
     /// background" (the dialog closes, the run goes on); after it, they close it for good.
@@ -651,6 +701,8 @@ pub enum Action {
     Switch { name: String, branch: String },
     /// Run the reset (after the Reset modal's "Discard and reset").
     Reset { name: String },
+    /// `ritz-get delete-data NAME --yes` (after the DeleteData modal's confirm button).
+    DeleteData { name: String },
     /// Auto-update off.
     Hold { name: String },
     /// Auto-update on.
@@ -710,13 +762,14 @@ impl Action {
             Action::Remove { name } => Command::Remove { name },
             Action::Switch { name, branch } => Command::Switch { name, branch },
             Action::Reset { name } => Command::Reset { name },
+            Action::DeleteData { name } => Command::DeleteData { name },
             Action::Hold { name } => Command::Hold { name },
             Action::Unhold { name } => Command::Unhold { name },
             Action::Open { name } => Command::Open { name },
             Action::Shortcut { name, remove } => Command::Shortcut { name, remove },
             Action::SetDir(p) => Command::Dir { path: Some(p) },
             Action::SetShortcutsDir(p) => Command::Shortcuts { path: Some(p) },
-            Action::CheckForUpdates => Command::List { offline: false, all: false },
+            Action::CheckForUpdates => Command::List { offline: false, all: false, data: true },
             Action::Branches { name } => Command::Branches { name },
             _ => return None,
         })
@@ -741,8 +794,18 @@ mod tests {
     #[test]
     fn command_args() {
         let a = |c: Command| c.args().join(" ");
-        assert_eq!(a(Command::List { offline: true, all: false }), "list --offline --porcelain");
-        assert_eq!(a(Command::List { offline: false, all: false }), "list --porcelain");
+        assert_eq!(a(Command::List { offline: true, all: false, data: false }), "list --offline --porcelain");
+        assert_eq!(a(Command::List { offline: false, all: false, data: false }), "list --porcelain");
+        assert_eq!(a(Command::List { offline: true, all: false, data: true }), "list --offline --porcelain --data");
+        assert_eq!(a(Command::List { offline: false, all: false, data: true }), "list --porcelain --data");
+        assert_eq!(a(Command::List { offline: false, all: true, data: true }), "list --porcelain --all --data");
+        assert_eq!(a(Command::DeleteData { name: "x".into() }), "delete-data x --yes");
+        assert_eq!(Command::DeleteData { name: "x".into() }.target(), Some("x"));
+        assert!(!Command::DeleteData { name: "x".into() }.uses_sudo());
+        assert_eq!(
+            Action::DeleteData { name: "x".into() }.to_command(),
+            Some(Command::DeleteData { name: "x".into() })
+        );
         assert_eq!(a(Command::Update { name: None }), "update --yes");
         assert_eq!(a(Command::Update { name: Some("x".into()) }), "update x --yes");
         assert_eq!(a(Command::Reset { name: "x".into() }), "reset x --yes");
@@ -756,6 +819,34 @@ mod tests {
         assert_eq!(a(Command::Shortcuts { path: None }), "shortcuts");
         assert!(Command::Remove { name: "x".into() }.uses_sudo());
         assert!(!Command::Update { name: None }.uses_sudo());
+    }
+
+    #[test]
+    fn fmt_kb_cases() {
+        assert_eq!(fmt_kb(0), "0 KB");
+        assert_eq!(fmt_kb(340), "340 KB");
+        assert_eq!(fmt_kb(1023), "1023 KB");
+        assert_eq!(fmt_kb(1024), "1 MB");
+        assert_eq!(fmt_kb(14336), "14 MB");
+        assert_eq!(fmt_kb(1536 * 1024), "1.5 GB");
+    }
+
+    #[test]
+    fn data_label_cases() {
+        let dp = |kb: Option<u64>| DataPath { path: "~/x".into(), kb };
+        let mut e = crate::sample::listing().entries().next().unwrap().clone();
+        e.data = vec![];
+        assert_eq!((e.data_label(), e.data_kb()), (None, None));
+        e.data = vec![dp(Some(340))];
+        assert_eq!(e.data_label().as_deref(), Some("1 folder, 340 KB"));
+        e.data = vec![dp(Some(12288)), dp(Some(2048))];
+        assert_eq!((e.data_label().as_deref(), e.data_kb()), (Some("2 folders, 14 MB"), Some(14336)));
+        e.data = vec![dp(None), dp(None)];
+        assert_eq!((e.data_label().as_deref(), e.data_kb()), (Some("2 folders"), None));
+        e.data = vec![dp(None)];
+        assert_eq!(e.data_label().as_deref(), Some("1 folder"));
+        e.data = vec![dp(None), dp(Some(1024))];
+        assert_eq!(e.data_label().as_deref(), Some("2 folders, 1 MB"));
     }
 
     #[test]
