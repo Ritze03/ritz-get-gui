@@ -1,6 +1,6 @@
 #porcelain 1
 #online 1
-E	Software	SteamAlt	Steam Userdata Mover	program	Ritze03/SteamAlt	installed	current	0	main	2026-10-17 8a3f1c9	2026-10-17 8a3f1c9	0	0	0	Copy Steam game saves and settings between accounts on one PC	on
+E	Software	SteamAlt	Steam Userdata Copier	program	Ritze03/SteamAlt	installed	current	0	main	2026-10-17 8a3f1c9	2026-10-17 8a3f1c9	0	0	0	Copy Steam game saves and settings between accounts on one PC	on
 E	Software	ritz	Ritz	program	Ritze03/ritz	available	-	0	main	-	4be8a30	-	-	-	Linux Steam launch wrapper	-
 E	Helpers	ritz-get	ritz-get	program	Ritze03/ritz-get	installed	current	0	main	2026-10-22 a596443	2026-10-22 a596443	0	0	0	Install, update and remove Ritze03's programs, built from source	-
 E	Unlisted	old-experiment	old-experiment	program	-	unlisted	current	0	main	2026-09-02 77aa001	2026-09-02 77aa001	0	0	0		-

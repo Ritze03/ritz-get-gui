@@ -3,7 +3,7 @@
 E	Software	gamescope-ritz	Gamescope Ritz	program	Ritze03/gamescope-ritz	installed	current	0	main	2026-10-09 0b7c5e2	2026-10-09 0b7c5e2	0	0	0	SteamOS session compositing window manager, with added features	-
 E	Software	ritz	Ritz	program	Ritze03/ritz	available	-	0	main	-	4be8a30	-	-	-	Linux Steam launch wrapper	-
 S	ritz	Set Steam launch options to `ritz %command%`. Details: https://ritze03.github.io/ritz/
-E	Software	SteamAlt	Steam Userdata Mover	program	Ritze03/SteamAlt	installed	fetch-failed	0	main	2026-10-17 8a3f1c9	-	-	0	0	Copy Steam game saves and settings between accounts on one PC	on
+E	Software	SteamAlt	Steam Userdata Copier	program	Ritze03/SteamAlt	installed	fetch-failed	0	main	2026-10-17 8a3f1c9	-	-	0	0	Copy Steam game saves and settings between accounts on one PC	on
 E	Helpers	ritz-get	ritz-get	program	Ritze03/ritz-get	installed	current	0	main	2026-10-22 a596443	2026-10-22 a596443	0	0	0	Install, update and remove Ritze03's programs, built from source	-
 E	Websites	cs2-multimap	CS2 Multimap	website	https://ritze03.github.io/stupid-pages/cs2-multimap-generator.html	website	-	0	-	-	-	-	-	-	CS2 multimap config generator	off
 #hidden 2

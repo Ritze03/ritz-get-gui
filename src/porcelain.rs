@@ -210,7 +210,7 @@ mod tests {
 
     #[test]
     fn every_fixture_parses() {
-        for (name, text, n) in [("full", FULL, 18), ("offline", OFFLINE, 18), ("hidden", HIDDEN, 5), ("unlisted", UNLISTED, 6), ("legacy-16", LEGACY, 18)] {
+        for (name, text, n) in [("full", FULL, 19), ("offline", OFFLINE, 19), ("hidden", HIDDEN, 5), ("unlisted", UNLISTED, 6), ("legacy-16", LEGACY, 19)] {
             let l = parse(text).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(l.version, 1, "{name}");
             assert_eq!(l.entries().count(), n, "{name}");
@@ -248,7 +248,8 @@ mod tests {
         assert_eq!(tray.setup.len(), 2);
         assert!(tray.setup[0].text.starts_with("In TeamSpeak"));
         assert!(tray.setup[1].text.contains("https://github.com/Ritze03/ts6tray#quick-start"));
-        assert_eq!(l.entries().map(|e| e.setup.len()).sum::<usize>(), 5);
+        assert_eq!(l.entries().map(|e| e.setup.len()).sum::<usize>(), 6);
+        assert!(find(&l, "ForzaTelemetryV3").setup[0].text.starts_with("Hotkeys, gearbox"));
         // the entry after an entry with S lines gets none
         assert!(find(&l, "ForzaTelemetryV3Launcher").setup.is_empty());
     }

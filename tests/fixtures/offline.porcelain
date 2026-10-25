@@ -3,11 +3,13 @@
 E	Software	yt-dlp-gui	yt-dlp GUI	program	Ritze03/yt-dlp-gui	installed	unknown	1	main	2026-10-14 3f9e21a	-	-	0	0	Lean Go + Gio desktop GUI for yt-dlp	on
 E	Software	ritz	Ritz	program	Ritze03/ritz	offline	-	0	-	-	-	-	-	-	Linux Steam launch wrapper	-
 E	Software	ForzaTelemetryV3Launcher	Forza Telemetry V3 Launcher	program	Ritze03/ForzaTelemetryV3Launcher	offline	-	0	master	-	-	-	-	-	Launcher for Forza Telemetry V3: keeps it up to date, builds and runs it	-
+E	Software	ForzaTelemetryV3	Forza Telemetry V3	program	Ritze03/ForzaTelemetryV3	offline	-	0	-	-	-	-	-	-	Live telemetry dashboard for Forza Horizon (the app itself, no launcher)	-
+S	ForzaTelemetryV3	Hotkeys, gearbox and backfire need the input group: sudo usermod -aG input $USER, then log in again
 E	Software	simple-screensharing	Simple Screensharing	program	Ritze03/simple-screensharing	offline	-	0	-	-	-	-	-	-	Friends screensharing: native desktop client (E2E-encrypted, low latency)	-
 S	simple-screensharing	Needs PipeWire (incl. pw-loopback) and GStreamer plugins pipewire/good/bad/libav at runtime
 S	simple-screensharing	Needs a relay: self-host from this repo, or use a friend's; the app takes a join link
 E	Software	geofinder	Geofinder	program	Ritze03/geofinder	installed	modified	0	main	2026-10-01 2d81f06	-	-	3	0	Geobingo-style multiplayer party game with real Google and Apple Maps	on
-E	Software	SteamAlt	Steam Userdata Mover	program	Ritze03/SteamAlt	installed	unknown	0	main	2026-10-17 8a3f1c9	-	-	0	0	Copy Steam game saves and settings between accounts on one PC	on
+E	Software	SteamAlt	Steam Userdata Copier	program	Ritze03/SteamAlt	installed	unknown	0	main	2026-10-17 8a3f1c9	-	-	0	0	Copy Steam game saves and settings between accounts on one PC	on
 E	Software	gamescope-ritz	Gamescope Ritz	program	Ritze03/gamescope-ritz	installed	unknown	0	main	2026-10-09 0b7c5e2	-	-	0	0	SteamOS session compositing window manager, with added features	-
 S	gamescope-ritz	Ritz users: copy its Ritz module by hand, see https://github.com/Ritze03/gamescope-ritz#quick-start
 E	Helpers	ritz-get	ritz-get	program	Ritze03/ritz-get	installed	unknown	0	main	2026-10-22 a596443	-	-	0	0	Install, update and remove Ritze03's programs, built from source	-

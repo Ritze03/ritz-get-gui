@@ -115,6 +115,13 @@ pub fn listing() -> Listing {
                 forza,
                 setup(
                     available(
+                        "Software", "ForzaTelemetryV3", "Forza Telemetry V3",
+                        "Live telemetry dashboard for Forza Horizon (the app itself, no launcher)", "1821a51",
+                    ),
+                    &["Hotkeys, gearbox and backfire need the input group: sudo usermod -aG input $USER, then log in again"],
+                ),
+                setup(
+                    available(
                         "Software", "simple-screensharing", "Simple Screensharing",
                         "Friends screensharing: native desktop client (E2E-encrypted, low latency)", "f6431b8",
                     ),
@@ -124,7 +131,7 @@ pub fn listing() -> Listing {
                     ],
                 ),
                 geo,
-                current("Software", "SteamAlt", "Steam Userdata Mover", "Copy Steam game saves and settings between accounts on one PC", "2026-10-17 8a3f1c9", On),
+                current("Software", "SteamAlt", "Steam Userdata Copier", "Copy Steam game saves and settings between accounts on one PC", "2026-10-17 8a3f1c9", On),
                 setup(
                     current(
                         "Software", "gamescope-ritz", "Gamescope Ritz",

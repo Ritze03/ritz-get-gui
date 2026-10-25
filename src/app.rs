@@ -3043,7 +3043,7 @@ mod tests {
         assert!(s.visible_sections().iter().all(|(_, v)| v.iter().all(|e| e.has_update())));
         s.filter = Filter::All;
         s.search = "forza".into();
-        assert_eq!(s.visible_sections().iter().map(|(_, v)| v.len()).sum::<usize>(), 1);
+        assert_eq!(s.visible_sections().iter().map(|(_, v)| v.len()).sum::<usize>(), 2);
     }
 
     #[test]
