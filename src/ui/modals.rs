@@ -8,6 +8,10 @@
 //! * [`Modal::Reset`] (D22 D32 D53 D61): 420 px, `[Open folder] [Cancel] [Discard and reset]`; Cancel gets
 //!   the focus, so Enter cancels. The text promises nothing beyond "the old version stays if the
 //!   rebuild fails".
+//! * [`Modal::DeleteData`]: 420 px, "Delete NAME\u{2019}s data?", the data folders (mono, with their sizes, in a
+//!   FIELD box that scrolls when there are many), "This can\u{2019}t be undone.", `[Cancel] [Delete]`; Cancel gets
+//!   the focus and Delete is the danger button, so nothing is ever deleted by one click or one Enter.
+//!   Delete is off while the program is still installed (ritz-get refuses then).
 //! * [`Modal::Run`] (design canvas boards 2a, 3, 4): the progress dialog of an install / update /
 //!   repair / switch / reset / remove (460 px) and of Update all (500 px), 20 px padding, 16 px gap,
 //!   28 px buttons, 56 px (48 px) app icon with a status badge. Its content is `state.run`:
@@ -71,7 +75,7 @@ pub fn draw(ctx: &egui::Context, state: &AppState, actions: &mut Vec<Action>) {
     }
     match &state.modal {
         Some(Modal::Reset { id }) => reset(ctx, state, id, actions),
-        Some(Modal::DeleteData { .. }) => {} // drawn by the UI worker
+        Some(Modal::DeleteData { id }) => delete_data(ctx, state, id, actions),
         Some(Modal::Run) => run(ctx, state, actions),
         Some(Modal::Log) => log_modal(ctx, state, actions),
         None => {
@@ -133,6 +137,87 @@ fn reset(ctx: &egui::Context, state: &AppState, id: &str, actions: &mut Vec<Acti
     }
 }
 
+// ---- Delete data -------------------------------------------------------------------------------
+
+fn delete_data(ctx: &egui::Context, state: &AppState, id: &str, actions: &mut Vec<Action>) {
+    let entry = state.listing.find(id);
+    let name = entry.map_or_else(|| id.rsplit('/').next().unwrap_or(id).to_owned(), |e| e.name.clone());
+    let display = entry.map_or(name.as_str(), Entry::display).to_owned();
+    let data = entry.map_or(&[][..], |e| e.data.as_slice());
+    let installed = entry.is_some_and(Entry::is_installed);
+    // Room for the list: the rest of the dialog is about 190 px.
+    let list_h = room(ctx, 190.0, 60.0, 220.0);
+
+    let close = show(ctx, "modal_delete_data", true, |ui| {
+        title(ui, &format!("Delete {display}\u{2019}s data?"));
+        if data.is_empty() {
+            // gone after a refresh (or deleted elsewhere): nothing left to confirm
+            body(ui, "There is no data left to delete.");
+        } else {
+            data_list(ui, data, list_h);
+            if installed {
+                body(ui, &format!("{display} is still installed and uses this data. Remove it first, then delete its data."));
+            }
+            body(ui, "This can\u{2019}t be undone.");
+        }
+        let mut close = false;
+        buttons(ui, |ui| {
+            // right-to-left: the last pushed is leftmost
+            if !data.is_empty() {
+                let go = ui.add_enabled(state.actions_enabled() && !installed, theme::danger_button("Delete"));
+                theme::hover_outline(ui, &go, theme::DANGER);
+                if go.clicked() {
+                    // Close first: the delete opens the progress dialog, which the close must not take away.
+                    actions.push(Action::CloseModal);
+                    actions.push(Action::DeleteData { name: name.clone() });
+                }
+            }
+            let cancel = ui.add(theme::secondary_button(if data.is_empty() { "Close" } else { "Cancel" }));
+            focus_first_frames(ui.ctx(), &cancel, "delete-data");
+            if cancel.clicked() {
+                close = true;
+            }
+        });
+        close
+    });
+    if close {
+        actions.push(Action::CloseModal);
+    }
+}
+
+/// The data folders in a FIELD box: the path (mono, wrapped at slashes) on the left, its size dim on the right.
+fn data_list(ui: &mut egui::Ui, data: &[crate::model::DataPath], max_h: f32) {
+    let size_font = theme::regular(12.0);
+    let sizes: Vec<String> = data.iter().map(|d| d.kb.map_or_else(|| "size unknown".to_owned(), crate::model::fmt_kb)).collect();
+    let sw = sizes.iter().map(|t| ui.painter().layout_no_wrap(t.clone(), size_font.clone(), theme::TEXT_DIM).size().x).fold(0.0_f32, f32::max).ceil();
+    Frame::new()
+        .fill(theme::FIELD)
+        .stroke(Stroke::new(1.0_f32, theme::BORDER))
+        .corner_radius(theme::RADIUS)
+        .inner_margin(Margin::symmetric(8, 6))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            egui::ScrollArea::vertical().max_height(max_h).auto_shrink([false, true]).show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 6.0;
+                // 12 px between the path and its size, and a little for the scroll bar
+                let pw = (ui.available_width() - sw - 12.0 - 10.0).max(60.0);
+                let font = theme::mono(11.5);
+                for (d, size) in data.iter().zip(&sizes) {
+                    ui.horizontal_top(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        let shown = theme::wrap_at_slashes(ui, &tilde(&d.path), &font, pw);
+                        ui.allocate_ui_with_layout(egui::vec2(pw, 0.0), Layout::top_down(Align::Min), |ui| {
+                            ui.set_width(pw);
+                            ui.add(egui::Label::new(RichText::new(shown).font(font.clone()).color(theme::TEXT)).wrap());
+                        });
+                        ui.add_space(12.0);
+                        ui.add(egui::Label::new(RichText::new(size).font(size_font.clone()).color(theme::TEXT_DIM)).wrap_mode(egui::TextWrapMode::Extend));
+                    });
+                }
+            });
+        });
+}
+
 // ---- Run: the progress dialog (canvas boards 2a / 3 / 4) -------------------------------------
 
 /// The status badge on an icon's corner.
@@ -165,6 +250,12 @@ fn capital(verb: Verb) -> String {
     format!("{}{}", b[..1].to_uppercase(), &b[1..])
 }
 
+/// After a Remove: what the program left behind ("2 folders, 14 MB"), once the refreshed listing is in.
+fn data_left(run: &Run, entry: Option<&Entry>) -> Option<String> {
+    let e = entry.filter(|e| run.verb == Verb::Remove && !e.is_installed())?;
+    e.data_label()
+}
+
 type Sub = Vec<(String, Color32)>;
 
 /// The mono line under a single run's title.
@@ -193,7 +284,7 @@ fn sub_line(run: &Run, entry: Option<&Entry>) -> Sub {
             }
             if let Some((a, b)) = &run.change {
                 v.push((format!("{} \u{2192} {}", sha(a), sha(b)), dim));
-            } else if run.verb != Verb::Remove {
+            } else if !matches!(run.verb, Verb::Remove | Verb::DeleteData) {
                 if let Some(e) = entry {
                     if let Some(b) = &e.branch {
                         v.push((format!("branch {b}"), dim));
@@ -203,9 +294,13 @@ fn sub_line(run: &Run, entry: Option<&Entry>) -> Sub {
                     }
                 }
             }
+            // A removed program that left data behind: say why the "Delete data…" button is there.
+            if let Some(label) = data_left(run, entry) {
+                v.push((format!("Data left: {label}"), dim));
+            }
         }
         RunPhase::Failed { .. } => {
-            if !matches!(run.verb, Verb::Install | Verb::Remove) {
+            if !matches!(run.verb, Verb::Install | Verb::Remove | Verb::DeleteData) {
                 if let Some(i) = entry.and_then(|e| e.installed.as_ref()) {
                     v.push((format!("still on {}", i.sha), dim));
                 }
@@ -487,17 +582,28 @@ fn run_one(ctx: &egui::Context, state: &AppState, run: &Run, actions: &mut Vec<A
                 if state.run_log_open {
                     run_log(ui, state, log_h);
                 }
+                let has_data = data_left(run, entry).is_some();
+                let mut more = Vec::new();
                 button_row(ui, |ui| log_buttons(ui, state, actions), |ui| {
                     let done = mbtn(ui, true, "Done");
                     focus_first_frames(ui.ctx(), &done, tag);
                     close |= done.clicked();
+                    // Only opens the confirmation; nothing is deleted from here.
+                    if has_data && mbtn(ui, false, "Delete data\u{2026}").clicked() {
+                        if let Some(e) = entry {
+                            more.push(Action::CloseModal);
+                            more.push(Action::ShowModal(Modal::DeleteData { id: e.id() }));
+                        }
+                    }
                 });
+                actions.extend(more);
             }
             RunPhase::Failed { reason } => {
                 alert(ui, reason);
                 let note = match verb {
                     Verb::Install => "Nothing was installed. Open the log for details, then try again.",
                     Verb::Remove => "Open the log for details, then try again.",
+                    Verb::DeleteData => "Nothing was deleted. Open the log for details, then try again.",
                     _ => "Your installed version is unchanged and still works.",
                 };
                 body(ui, note);
@@ -1130,6 +1236,8 @@ mod tests {
         use egui::Rect;
         let hooks = [
             "reset=Software/geofinder",
+            "deletedata=Software/ritz",
+            "deletedata=Software/SteamAlt",
             "install-running=Software/ritz",
             "install-done=Software/ritz",
             "install-failed=Software/ritz",
@@ -1175,6 +1283,114 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Run `state`'s modal for a few frames, then click the button labelled `label` (or press Enter
+    /// when `None`); the actions the dialog pushed on the frames after that.
+    fn press(state: &AppState, label: Option<&str>) -> Vec<Action> {
+        let ctx = test_render::context();
+        let (w, h) = (900.0, 700.0);
+        let mut actions = Vec::new();
+        let mut pos = None;
+        let mut events: Vec<egui::Event> = Vec::new();
+        for frame in 0..14 {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(w, h))),
+                events: std::mem::take(&mut events),
+                ..Default::default()
+            };
+            let mut found = None;
+            let out = ctx.run(input, |ctx| draw(ctx, state, &mut actions));
+            for cs in &out.shapes {
+                if let (egui::Shape::Text(t), Some(l)) = (&cs.shape, label) {
+                    if t.galley.text() == l {
+                        found = Some(t.galley.rect.translate(t.pos.to_vec2()).center());
+                    }
+                }
+            }
+            match frame {
+                5 => match label {
+                    Some(l) => {
+                        let p = found.unwrap_or_else(|| panic!("button {l:?} is not drawn"));
+                        pos = Some(p);
+                        events = vec![egui::Event::PointerMoved(p)];
+                    }
+                    None => {
+                        let key = |pressed| egui::Event::Key { key: egui::Key::Enter, physical_key: None, pressed, repeat: false, modifiers: Default::default() };
+                        events = vec![key(true), key(false)];
+                    }
+                },
+                6 | 7 if pos.is_some() => {
+                    events = vec![egui::Event::PointerButton { pos: pos.unwrap(), button: egui::PointerButton::Primary, pressed: frame == 6, modifiers: Default::default() }];
+                }
+                _ => {}
+            }
+        }
+        actions
+    }
+
+    fn sample_state() -> AppState {
+        AppState { listing: crate::sample::listing(), ..AppState::default() }
+    }
+
+    fn ritz_mut(s: &mut AppState) -> &mut Entry {
+        s.listing.sections.iter_mut().flat_map(|x| x.entries.iter_mut()).find(|e| e.name == "ritz").unwrap()
+    }
+
+    /// Delete is one deliberate click: Cancel / Enter (Cancel has the focus) only close; only Delete
+    /// closes and starts the delete.
+    #[test]
+    fn delete_data_confirm_never_deletes_by_default() {
+        let mut s = sample_state();
+        s.apply_shot_hook("deletedata=Software/ritz");
+        assert_eq!(press(&s, Some("Cancel")), vec![Action::CloseModal]);
+        assert_eq!(press(&s, None), vec![Action::CloseModal], "Enter lands on Cancel");
+        assert_eq!(press(&s, Some("Delete")), vec![Action::CloseModal, Action::DeleteData { name: "ritz".into() }]);
+    }
+
+    /// A program that is still installed cannot be confirmed (ritz-get would refuse); one without data
+    /// has nothing to confirm.
+    #[test]
+    fn delete_data_confirm_is_off_when_installed_or_empty() {
+        let mut s = sample_state();
+        s.apply_shot_hook("deletedata=Software/SteamAlt");
+        assert_eq!(press(&s, Some("Delete")), Vec::<Action>::new());
+        let mut s = sample_state();
+        s.apply_shot_hook("deletedata=Software/ritz");
+        ritz_mut(&mut s).data.clear();
+        assert_eq!(press(&s, Some("Close")), vec![Action::CloseModal]);
+    }
+
+    /// After a Remove that left data: "Delete data..." only opens the confirmation (the run is dismissed
+    /// with it), Done only closes.
+    #[test]
+    fn remove_done_offers_delete_data_but_never_deletes() {
+        let mut s = sample_state();
+        test_render::finished_run(&mut s, "Software/ritz", Verb::Remove, RunPhase::Done { menu: false }, "ritz: removed");
+        assert_eq!(press(&s, Some("Done")), vec![Action::CloseModal]);
+        assert_eq!(
+            press(&s, Some("Delete data\u{2026}")),
+            vec![Action::CloseModal, Action::ShowModal(Modal::DeleteData { id: "Software/ritz".into() })]
+        );
+        // a program with no data left: no such button
+        ritz_mut(&mut s).data.clear();
+        assert!(std::panic::catch_unwind(|| press(&s, Some("Delete data\u{2026}"))).is_err());
+    }
+
+    #[test]
+    fn delete_data_run_lines() {
+        let mut s = sample_state();
+        let subs = |s: &AppState, id: &str| sub_line(s.run.as_ref().unwrap(), s.listing.find(id)).into_iter().map(|(t, _)| t).collect::<Vec<_>>();
+        let done = RunPhase::Done { menu: false };
+        // Done after a delete: no branch / version lines
+        test_render::finished_run(&mut s, "Software/SteamAlt", Verb::DeleteData, done.clone(), "SteamAlt: data deleted");
+        assert!(subs(&s, "Software/SteamAlt").is_empty());
+        // Done after a remove: only the data left (the sample's ritz is not installed)
+        test_render::finished_run(&mut s, "Software/ritz", Verb::Remove, done, "ritz: removed");
+        assert_eq!(subs(&s, "Software/ritz"), ["Data left: 2 folders, 14 MB"]);
+        // Failed delete: no "still on ..."
+        test_render::finished_run(&mut s, "Software/SteamAlt", Verb::DeleteData, RunPhase::Failed { reason: "x".into() }, "x");
+        assert!(subs(&s, "Software/SteamAlt").is_empty());
     }
 
     #[test]
