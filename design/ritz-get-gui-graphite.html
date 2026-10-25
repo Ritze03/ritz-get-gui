@@ -1,0 +1,757 @@
+<meta charset="utf-8">
+<title>ritz-get GUI · Graphite</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;700&family=Geist+Mono:wght@400;700&display=swap">
+<style>
+/* Layout (Graphite "nested panes"): VBox[ TopBar, RestartBar, Body HBox[ GroupsPane | SidePane ], LogPane, StatusBar ].
+   Every pane clips (overflow) and sizes its rows from its own width; tiles, cards and rows wrap or stack, nothing is absolutely placed
+   (the "…" menu and the Reset modal are the only overlay layers). Graphite is a single dark look, so there is no light variant. */
+:root {
+  color-scheme: dark;
+  /* Graphite role tokens (names from the spec, lower-kebab-case) */
+  --accent: #5B8BF0;        /* ACCENT */
+  --head: #14171A;          /* HEAD */
+  --panel: #1E2125;         /* PANEL */
+  --panel2: #191C1F;        /* PANEL2 */
+  --field: #15181B;         /* FIELD */
+  --border: #2C3036;        /* BORDER */
+  --btn: #262A30;           /* BTN */
+  --btnbd: #343941;         /* BTNBD */
+  --text: #E7E9EC;          /* TEXT */
+  --dim: #969CA6;           /* DIM */
+  --faint: #646A73;         /* FAINT */
+  --primary-text: #0B1222;  /* PRIMARY_TEXT */
+  --danger: #E15554;        /* DANGER */
+  --good: #6CC551;          /* GOOD */
+  --warn: #D8B455;          /* WARN */
+  /* steel(lum) = rgb(0.9·lum, lum, min(255, 1.17·lum)) */
+  --text-dim: rgb(135 150 175.5);   /* TEXT_DIM   steel(150) */
+  --text-faint: rgb(94.5 105 122.85); /* TEXT_FAINT steel(105) */
+  --stroke-mid: rgb(72 80 93.6);    /* STROKE_MID steel(80) */
+  --stroke-dim: rgb(45 50 58.5);    /* STROKE_DIM steel(50) */
+  --track: rgb(36 40 46.8);         /* TRACK      steel(40) */
+  --well: rgb(21.6 24 28.08);       /* WELL       steel(24) */
+  /* tints */
+  --sel: color-mix(in srgb, var(--accent) 16%, transparent);   /* SEL */
+  --selbd: color-mix(in srgb, var(--accent) 42%, transparent); /* SELBD */
+  --hov: rgb(255 255 255 / 5%);                                /* HOV */
+  --shade: color-mix(in srgb, var(--head) 72%, transparent);   /* derived from HEAD: menu shadow, modal backdrop */
+
+  /* type: Geist for UI text, Geist Mono where columns must align (versions, paths, log, counts); icon glyphs are Geist Mono Nerd Font outlines inlined as SVG */
+  --font: "Geist", system-ui, "Segoe UI", Roboto, sans-serif;
+  --mono: "Geist Mono", ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  --fs-heading: 18px; --fs-body: 13px; --fs-button: 13px; --fs-small: 11px; --fs-mono: 12px;
+  --fs-pill: 12.5px; --fs-seg: 14px; --fs-title: 12px; --fs-word: 16px;
+  /* metrics */
+  --r: 7px; --r-box: 5px; --r-tab: 4px; --ctl: 22px;
+  --gap: 8px; --row-gap: 4px; --card-pad: 6px;
+  --gut-l: max(16px, env(safe-area-inset-left, 0px));
+  --gut-r: max(16px, env(safe-area-inset-right, 0px));
+}
+
+html, body { height: 100%; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--panel); color: var(--text); font-family: var(--font); font-size: var(--fs-body); line-height: 1.4; }
+*, *::before, *::after { box-sizing: border-box; }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+::selection { background: var(--selbd); color: var(--text); }
+:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+* { scrollbar-color: var(--btnbd) transparent; scrollbar-width: thin; }
+a { color: var(--accent); }
+
+/* ---------- glyphs ---------- */
+.nf { width: 1em; height: 1em; flex: 0 0 auto; display: block; fill: currentColor; }
+.g { width: 16px; height: 16px; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; color: var(--text-dim); }
+
+/* ---------- app shell ---------- */
+.app { height: 100%; display: flex; flex-direction: column; min-width: 0; }
+
+/* top bar */
+.topbar { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap); background: var(--head);
+  padding-block: 4px 5px; padding-left: var(--gut-l); padding-right: var(--gut-r); }
+.brand { font-size: var(--fs-word); font-weight: 700; color: var(--accent); white-space: nowrap; }
+.vdiv { width: 1px; height: 18px; background: var(--border); flex: 0 0 auto; }
+.pagepill { font-size: var(--fs-pill); color: var(--text); background: var(--sel); border: 1px solid var(--selbd); border-radius: 999px;
+  padding: 2px 12px; min-width: 11ch; text-align: center; white-space: nowrap; }
+.seg { display: inline-grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); height: 32px; padding: 3px; max-width: 100%; min-width: 0;
+  background: var(--field); border: 1px solid var(--border); border-radius: 999px; }
+.seg button { min-width: 0; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 0 10px; border: 1px solid transparent;
+  border-radius: 999px; background: none; color: var(--text-dim); font-size: var(--fs-seg); white-space: nowrap; overflow: hidden; }
+.seg button:hover { background: var(--hov); }
+.seg button[aria-pressed="true"] { background: var(--sel); border-color: var(--selbd); color: var(--text); }
+.seg .n { font-size: var(--fs-small); color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.seg .n.hot { color: var(--warn); }
+.spacer { flex: 1 1 0; min-width: 0; }
+.search { flex: 0 1 220px; min-width: 120px; height: var(--ctl); display: flex; align-items: center; gap: 6px; padding: 0 8px;
+  background: var(--field); border: 1px solid var(--btnbd); border-radius: var(--r); color: var(--dim); font-size: 12px; }
+.search:hover { border-color: var(--accent); }
+.search:focus-within { border-color: var(--accent); }
+.search input { flex: 1 1 auto; min-width: 0; border: 0; background: none; outline: none; color: var(--text); font-size: var(--fs-body); padding: 0; }
+.search input::placeholder { color: var(--dim); }
+.tabbtn { width: 30px; height: 30px; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; border: 0;
+  border-radius: var(--r-tab); background: none; color: var(--text-dim); font-size: 15px; }
+.tabbtn:hover { background: var(--btn); }
+.tabbtn[aria-pressed="true"] { background: var(--sel); color: var(--accent); }
+
+/* buttons */
+.btn { height: var(--ctl); display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 9px;
+  border: 1px solid var(--btnbd); border-radius: var(--r); background-color: var(--btn); color: var(--text);
+  font-size: var(--fs-button); line-height: 1; white-space: nowrap; }
+.btn:hover { border-color: var(--accent); background-image: linear-gradient(var(--hov), var(--hov)); }
+.btn:active { border-color: var(--selbd); }
+.btn.primary { background-color: var(--accent); border-color: var(--accent); color: var(--primary-text); font-weight: 700; }
+.btn.primary:active { border-color: var(--selbd); }
+.btn.danger { background-color: transparent; color: var(--danger); border-color: color-mix(in srgb, var(--danger) 42%, transparent); }
+.btn.danger:hover { border-color: var(--danger); }
+.btn:disabled, .btn:disabled:hover { cursor: default; background-color: var(--btn); background-image: none; border-color: var(--border); color: var(--faint); font-weight: 400; }
+.btn.sq { width: var(--ctl); padding: 0; }
+.btn.more { padding-bottom: 5px; }
+
+/* restart bar (D25) */
+.restart-bar { flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap; gap: var(--gap); margin: var(--gap) var(--gut-r) 0 var(--gut-l);
+  padding: 4px 4px 4px 10px; border-radius: var(--r); border: 1px solid color-mix(in srgb, var(--good) 42%, transparent);
+  background: color-mix(in srgb, var(--good) 12%, transparent); }
+.restart-bar .msg { flex: 1 1 16ch; min-width: 0; display: flex; align-items: center; gap: 8px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; background: var(--good); }
+
+/* body: two column panes */
+.body { flex: 1 1 auto; min-height: 0; display: flex; gap: var(--gap); padding-block: var(--gap); padding-left: var(--gut-l); padding-right: var(--gut-r); }
+.groups { flex: 1 1 auto; min-width: 0; overflow: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 2px; }
+.side { flex: 0 0 300px; min-width: 0; overflow: auto; background: var(--panel2); border: 1px solid var(--border); border-radius: var(--r); }
+
+/* group = collapsible category */
+.group { display: flex; flex-direction: column; gap: var(--gap); flex: 0 0 auto; min-width: 0; }
+.group-head { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; padding: 2px 0; border: 0; background: none; text-align: left; }
+.group-head .chev { color: var(--text-dim); font-size: 10px; width: 12px; height: 12px; display: inline-flex; align-items: center; justify-content: center; transition: transform .15s; }
+.group[data-collapsed="true"] .chev, .log[data-collapsed="true"] .chev { transform: rotate(-90deg); }
+.title { font-size: var(--fs-title); font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
+.count { font-size: var(--fs-small); color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.rule { flex: 1 1 auto; height: 1px; background: var(--border); min-width: 8px; }
+.group-head:hover .title { text-decoration: underline; text-underline-offset: 3px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(248px, 100%), 1fr)); gap: var(--gap); }
+.group[data-collapsed="true"] .grid { display: none; }
+
+/* program tile (a pane: clips, rows size from its width) */
+.tile { display: flex; flex-direction: column; gap: 6px; min-width: 0; overflow: hidden; padding: 8px; cursor: pointer;
+  background: transparent; border: 1px solid var(--border); border-radius: var(--r); }
+.tile:hover { border-color: var(--accent); background: var(--hov); }
+.tile[aria-selected="true"] { background: var(--sel); border-color: var(--selbd); }
+.tile[aria-selected="true"]:hover { border-color: var(--accent); }
+.tile-top { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }
+.pills { display: flex; flex-wrap: wrap; gap: 4px; flex: 1 1 auto; min-width: 0; }
+.gh { flex: 0 0 auto; width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-box);
+  border: 1px solid var(--btnbd); background: var(--btn); color: var(--text-dim); text-decoration: none; font-size: 12px; line-height: 1; }
+.gh:hover { border-color: var(--accent); color: var(--text); }
+.tile-id { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.tile-id .txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.name { font-weight: 700; font-size: var(--fs-body); line-height: 1.25; overflow-wrap: anywhere; }
+.desc { color: var(--dim); font-size: var(--fs-small); line-height: 1.4; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: calc(2 * 1.4em); }
+.ver { color: var(--text-dim); font-size: var(--fs-small); line-height: 1.45; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; min-height: calc(2 * 1.45em); }
+.ver b { color: var(--text); font-weight: 400; white-space: nowrap; }
+.ver .arrow { color: var(--warn); }
+.tile-actions { display: flex; gap: 6px; margin-top: auto; min-width: 0; }
+.tile-actions .btn.primary, .tile-actions .btn:disabled { flex: 1 1 auto; min-width: 0; }
+
+/* pills: every status uses the SEL/SELBD recipe in its own colour (16% fill, 42% border) */
+.pill { --c: var(--text-dim); display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 7px; border-radius: 999px;
+  font-size: var(--fs-small); font-weight: 500; letter-spacing: .03em; line-height: 1; text-transform: uppercase; white-space: nowrap; color: var(--c);
+  background: color-mix(in srgb, var(--c) 16%, transparent); border: 1px solid color-mix(in srgb, var(--c) 42%, transparent); }
+.pill.s-ok { --c: var(--good); }
+.pill.s-update { --c: var(--warn); }
+.pill.s-missing { --c: var(--text-dim); }
+.pill.s-needs { --c: var(--danger); }
+.pill.s-web { --c: var(--accent); }
+.pill.s-held { --c: var(--text-dim); }
+.pill.s-held.glyph { padding: 0 6px; font-size: 9px; }
+.pill.s-mod { --c: var(--danger); }
+.pill.s-setup { --c: var(--accent); }
+
+/* icons: real artwork (SVG/PNG) or the letter fallback drawn like the artwork's tile */
+.icon { flex: 0 0 auto; display: block; width: var(--sz); height: var(--sz); }
+.icon.sm { --sz: 36px; }
+.icon.lg { --sz: 88px; }
+.icon.fb { padding: calc(var(--sz) * .0625); }   /* the artwork's tile sits 32/512 inside its canvas */
+.icon.fb span { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; border-radius: 23%;
+  background: linear-gradient(var(--btn), var(--head)); box-shadow: inset 0 0 0 1px var(--border); color: var(--accent); font-weight: 700; }
+.icon.sm.fb span { font-size: 16px; }
+.icon.lg.fb span { font-size: 38px; }
+
+/* ---------- Graphite cards: transparent, BORDER stroke, radius 7, 6px inner margin, accent title, 4px row gap ---------- */
+.card { container-type: inline-size; display: flex; flex-direction: column; gap: var(--row-gap); min-width: 0; overflow: hidden;
+  padding: var(--card-pad); border: 1px solid var(--border); border-radius: var(--r); background: transparent; }
+.card > .title { margin-bottom: 2px; }
+.row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--gap); align-items: center; min-height: var(--ctl); }
+.row > * { min-width: 0; }
+.row-label { color: var(--text); overflow-wrap: anywhere; }
+.row-val { color: var(--text-dim); overflow-wrap: anywhere; text-align: right; font-size: var(--fs-mono); }
+.row-ctl { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.row-ctl.end { justify-content: flex-end; }
+.caption { color: var(--text-faint); font-size: var(--fs-small); overflow-wrap: anywhere; }
+.caption.warn { color: var(--warn); }
+@container (max-width: 420px) {
+  .row.stackable { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+}
+
+/* inputs */
+.input, select.input { height: var(--ctl); min-width: 0; width: 100%; padding: 0 8px; background: var(--field); color: var(--text);
+  border: 1px solid var(--btnbd); border-radius: var(--r); font-size: var(--fs-mono); }
+.input:hover, .input:focus { border-color: var(--accent); outline: none; }
+select.input { cursor: pointer; }
+select.input option { background: var(--field); color: var(--text); }
+
+/* auto-update switch: same family as the Graphite checkbox (accent when on, steel outline when off) */
+.switch { position: relative; flex: 0 0 auto; width: 34px; height: 18px; padding: 0; border-radius: 999px;
+  border: 1.5px solid var(--text-dim); background: var(--field); transition: background .15s, border-color .15s; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 50%; background: var(--text-dim); transition: transform .15s, background .15s; }
+.switch:hover { background-image: linear-gradient(var(--hov), var(--hov)); }
+.switch[aria-checked="true"] { background: var(--accent); border-color: var(--accent); }
+.switch[aria-checked="true"]::after { transform: translateX(16px); background: var(--text); }
+.switch:disabled { cursor: default; opacity: .45; background-image: none; }   /* disabled = one step dimmer */
+
+/* ---------- side panel ---------- */
+.side-inner { display: flex; flex-direction: column; gap: var(--gap); padding: var(--gap); min-width: 0; }
+.hero { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; padding: 6px 4px 4px; min-width: 0; }
+.hero .name { font-size: var(--fs-heading); }
+.hero .pills { justify-content: center; flex: 0 0 auto; }
+.hero .desc { -webkit-line-clamp: unset; min-height: 0; max-width: 34ch; font-size: 12px; }
+.setup-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: var(--row-gap); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.setup-list code { font-size: 11.5px; background: var(--field); border: 1px solid var(--border); border-radius: var(--r-box); padding: 0 4px; }
+
+/* action list (side panel + "…" menu) */
+.actions { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.action { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 26px; padding: 2px 6px; border: 0; border-radius: var(--r);
+  background: none; color: var(--text); text-align: left; text-decoration: none; font-size: var(--fs-body); overflow-wrap: anywhere; }
+.action:hover { background: var(--hov); }
+.action.danger, .action.danger .g { color: var(--danger); }
+.action:disabled { color: var(--faint); cursor: default; background: none; }
+.action:disabled .g { color: var(--faint); }
+.action .sub { margin-left: auto; color: var(--text-faint); font-size: var(--fs-small); display: inline-flex; align-items: center; gap: 4px; }
+.sep { height: 1px; background: var(--border); margin-block: 4px; flex: 0 0 auto; }
+
+/* settings page: single column capped at ~520px */
+.settings { display: flex; flex-direction: column; gap: var(--gap); width: 100%; max-width: 520px; min-width: 0; }
+.settings-head { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+
+/* popover ("…" menu): FIELD like any open menu */
+.pop { position: fixed; z-index: 20; min-width: 220px; max-width: calc(100vw - 16px); padding: 4px; display: flex; flex-direction: column; gap: 1px;
+  background: var(--field); border: 1px solid var(--border); border-radius: var(--r); box-shadow: 0 8px 24px var(--shade); }
+.pop .branches { padding-left: 22px; display: flex; flex-direction: column; gap: 1px; }
+.pop .switch-item { display: flex; align-items: center; gap: 8px; min-height: 26px; padding: 2px 6px; }
+.pop .switch-item .lbl { flex: 1 1 auto; }
+
+/* modal: dim backdrop swallows clicks, centred window, danger + Cancel; Enter confirms, Esc / backdrop cancels */
+.modal-back { position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; padding: 16px; background: var(--shade); }
+.modal { width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 8px; padding: 12px; min-width: 0;
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--r); box-shadow: 0 8px 24px var(--shade); }
+.modal h2 { margin: 0; font-size: var(--fs-body); font-weight: 700; color: var(--text); overflow-wrap: anywhere; }
+.modal p { margin: 0; color: var(--dim); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.modal .btns { display: flex; justify-content: flex-end; gap: var(--gap); flex-wrap: wrap; margin-top: 4px; }
+
+/* log pane */
+.log { flex: 0 0 auto; display: flex; flex-direction: column; min-width: 0; overflow: hidden; margin: 0 var(--gut-r) var(--gap) var(--gut-l);
+  background: var(--panel2); border: 1px solid var(--border); border-radius: var(--r); }
+.log-head { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; padding: 4px 8px; border: 0; background: none; text-align: left; }
+.log-head:hover .title { text-decoration: underline; text-underline-offset: 3px; }
+.log-head .term { color: var(--text-dim); font-size: 12px; display: inline-flex; }
+.log-body { height: 120px; overflow: auto; padding: 4px 8px; background: var(--field); border-top: 1px solid var(--border);
+  font-size: var(--fs-mono); line-height: 1.6; }
+.log[data-collapsed="true"] .log-body { display: none; }
+.log-line { display: flex; gap: 12px; white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+.log-line .t { color: var(--text-faint); flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+.log-line > span:last-child { min-width: 0; }
+.log-line.ok { color: var(--good); } .log-line.err { color: var(--danger); } .log-line.note { color: var(--accent); } .log-line.cmd { color: var(--text-dim); }
+
+/* status bar */
+.status { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px;
+  background: var(--panel2); border-top: 1px solid var(--border); color: var(--dim); font-size: var(--fs-small);
+  padding-block: 4px; padding-left: var(--gut-l); padding-right: var(--gut-r); }
+.status .left, .status .right { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.status .report { color: var(--accent); text-decoration: none; }
+.status .report:hover { text-decoration: underline; }
+
+.empty { color: var(--dim); padding: 40px 0; text-align: center; }
+
+.sortbox { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
+.sortbox label { color: var(--dim); font-size: 12px; }
+.sortbox select.input { width: auto; font-size: 12px; }
+/* mono only where alignment matters */
+.mono, .ver, .row-val, .log-body, .setup-list code, .count, .seg .n, .settings .input, .action .sub { font-family: var(--mono); }
+.pop-head { padding: 4px 6px 2px; font-size: 12px; font-weight: 700; color: var(--text); overflow-wrap: anywhere; }
+
+@media (max-width: 760px) {
+  .body { flex-direction: column; overflow-y: auto; }
+  .groups { overflow: visible; flex: 0 0 auto; padding-right: 0; }
+  .side { flex: 0 0 auto; overflow: visible; }
+  .search { flex: 1 1 100%; }
+  .spacer { display: none; }
+}
+@media (max-width: 620px) {
+  .seg { grid-auto-flow: row; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); height: auto; border-radius: 16px; flex: 1 1 100%; }
+  .seg button { height: 26px; }
+  .vdiv, .pagepill { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .chev, .switch, .switch::after { transition: none; } }
+</style>
+
+<div class="app">
+  <header class="topbar">
+    <div class="brand">ritz-get-gui</div>
+    <span class="vdiv" aria-hidden="true"></span>
+    <span class="pagepill" id="pagepill">Programs</span>
+    <nav class="seg" id="tabs" aria-label="Filter"></nav>
+    <div class="sortbox"><label for="sort">Sort</label>
+      <select class="input" id="sort">
+        <option value="default">Default</option><option value="name">Name</option>
+        <option value="updates">Updates first</option><option value="installed">Installed first</option>
+      </select></div>
+    <span class="spacer"></span>
+    <label class="search" id="searchbox"><span id="searchicon" style="display:inline-flex;font-size:12px"></span>
+      <input id="search" type="search" placeholder="Search programs" aria-label="Search programs"></label>
+    <button class="btn" id="check">Check for updates</button>
+    <button class="btn primary" id="updall"></button>
+    <button class="tabbtn" id="gear" aria-pressed="false" aria-label="Settings" title="Settings"></button>
+  </header>
+
+  <div class="restart-bar" id="restartbar" hidden>
+    <span class="msg"><span class="dot" aria-hidden="true"></span><span>ritz-get-gui was updated. Restart to use the new version.</span></span>
+    <button class="btn primary" id="restart">Restart</button>
+  </div>
+
+  <div class="body">
+    <main class="groups" id="groups"></main>
+    <aside class="side" id="side" aria-label="Selected program"></aside>
+  </div>
+
+  <section class="log" id="log" data-collapsed="false">
+    <button class="log-head" id="loghead" aria-expanded="true"><span class="chev" id="logchev"></span><span class="term" id="logterm"></span><span class="title">Build log</span><span class="count" id="logcount"></span><span class="rule"></span></button>
+    <div class="log-body" id="logbody"></div>
+  </section>
+
+  <footer class="status">
+    <span class="left"><span class="dot" aria-hidden="true"></span><span id="statusleft"></span></span>
+    <span class="right"><a class="report" href="https://github.com/Ritze03/ritz-get-gui/issues/new" target="_blank" rel="noopener">Report a problem with ritz-get</a><span>Ritze03</span></span>
+  </footer>
+</div>
+
+<script>
+/* Nerd Font (Geist Mono Nerd Font, Font Awesome range) glyph outlines, viewBox = ink box so they centre on their ink */
+const NF = {"gear":{"w":870,"h":923,"d":"M868 300C860 279 851 258 840 238L831 224C819 204 806 185 791 167C780 154 763 150 747 155L647 187C623 168 596 153 568 141L545 38C541 22 529 9 512 6C487 2 462 0 436 0C410 0 384 2 359 6C342 9 330 22 326 38L304 141C276 153 248 168 224 187L124 155C108 150 91 154 80 167C65 185 52 204 40 224L31 238C20 258 11 279 3 300C-3 316 2 333 14 344L92 416C90 431 89 445 89 461C89 477 90 492 92 507L14 578C2 589 -3 607 3 623C11 644 20 665 31 685L40 699C52 719 65 737 80 755C91 768 108 773 124 768L224 736C248 755 275 769 303 781L326 884C330 900 342 913 359 916C384 920 409 923 435 923C461 923 487 920 512 916C529 913 541 900 545 884L567 781C595 769 623 755 647 736L747 767C763 772 780 768 791 755C806 737 819 719 831 699L840 684C851 664 860 643 868 622C874 606 869 589 857 578L778 507C780 492 782 477 782 461C782 445 780 431 778 416L857 344C869 333 874 316 868 300ZM436 606C356 606 291 541 291 461C291 381 356 317 436 317C516 317 580 381 580 461C580 541 516 606 436 606Z"},"github":{"w":894,"h":872,"d":"M299 702C299 698 294 695 289 696C284 696 280 698 280 702C280 706 284 710 290 709C295 709 299 706 299 702ZM243 694C242 698 246 702 251 703C256 705 261 703 262 699C263 695 259 692 254 690C249 689 244 690 243 694ZM323 691C318 692 313 696 314 700C315 704 320 706 325 705C330 704 334 700 333 696C332 693 328 690 323 691ZM441 0C191 0 0 190 0 440C0 640 126 811 306 871C329 875 337 862 337 850C337 839 336 777 336 739C336 739 211 766 184 685C184 685 163 633 133 619C133 619 92 590 136 591C136 591 181 595 206 638C245 708 311 688 337 676C341 647 353 627 366 615C265 604 164 589 164 416C164 366 177 341 206 309C201 297 186 249 211 187C249 175 335 236 335 236C371 226 411 220 449 220C487 220 526 226 562 236C562 236 648 175 686 187C711 250 696 297 691 309C720 341 737 367 737 416C737 590 631 604 530 615C547 629 561 656 561 698V849C561 861 569 875 592 871C772 811 894 640 894 440C894 190 691 0 441 0ZM175 622C173 624 174 628 177 631C180 634 184 635 186 633C188 631 188 627 185 624C182 621 177 620 175 622ZM156 607C155 609 156 612 160 614C163 616 167 616 168 613C169 611 168 608 164 606C160 605 157 605 156 607ZM214 672C211 674 213 680 217 683C221 687 226 688 228 685C230 683 230 676 226 673C222 669 216 669 214 672ZM194 645C191 647 191 652 194 656C197 660 202 662 204 660C207 658 207 653 204 649C201 645 197 643 194 645Z"},"ext":{"w":923,"h":923,"d":"M577 0C545 0 519 25 519 57C519 89 545 115 577 115H726L363 478C340 501 340 537 363 560C386 583 422 583 445 560L808 197V346C808 378 833 404 865 404C897 404 923 378 923 346V57C923 25 897 0 865 0ZM144 57C64 57 0 122 0 202V779C0 859 64 923 144 923H721C801 923 865 859 865 779V577C865 545 840 519 808 519C776 519 750 545 750 577V779C750 795 737 807 721 807H144C128 807 115 795 115 779V202C115 186 128 173 144 173H346C378 173 404 147 404 115C404 83 378 57 346 57Z"},"download":{"w":923,"h":923,"d":"M519 57C519 25 494 0 462 0C430 0 404 25 404 57V495L272 363C249 340 213 340 190 363C167 386 167 421 190 444L421 675C444 698 479 698 502 675L733 444C756 421 756 386 733 363C710 340 674 340 651 363L519 495ZM115 634C51 634 0 686 0 750V807C0 871 51 923 115 923H808C872 923 923 871 923 807V750C923 686 872 634 808 634H625L543 716C498 761 425 761 380 716L298 634ZM779 735C803 735 822 755 822 779C822 803 803 822 779 822C755 822 736 803 736 779C736 755 755 735 779 735Z"},"refresh":{"w":865,"h":808,"d":"M160 308C174 268 197 232 229 200C342 86 524 86 637 200L667 230H606C574 230 548 256 548 288C548 320 574 346 606 346H807C839 346 865 320 865 288V86C865 54 839 28 807 28C775 28 750 54 750 86V150L718 118C560 -40 305 -40 147 118C103 162 71 214 52 270C41 300 57 332 87 342C117 354 149 338 160 308ZM41 464C32 466 24 472 17 478C10 486 5 494 2 504C1 506 1 508 1 510C0 514 0 516 0 520V722C0 754 26 778 58 778C90 778 115 754 115 722V658L147 690C305 848 560 848 718 690C762 646 794 594 813 538C824 508 808 476 778 464C748 454 716 470 705 500C691 540 668 576 636 608C523 720 341 720 228 608L197 576H259C291 576 317 552 317 520C317 488 291 462 259 462H58C55 462 53 462 50 462C47 462 44 462 41 464Z"},"trash":{"w":808,"h":923,"d":"M244 32 231 57H58C26 57 0 83 0 115C0 147 26 173 58 173H750C782 173 808 147 808 115C808 83 782 57 750 57H577L564 32C554 12 534 0 512 0H295C273 0 254 12 244 32ZM750 231H58L96 842C99 888 136 923 182 923H625C671 923 709 888 712 842Z"},"undo":{"w":836,"h":808,"d":"M198 231 229 200C342 87 524 87 637 200C750 313 750 495 637 608C524 721 342 721 229 608C206 585 170 585 147 608C124 631 124 667 147 690C305 848 560 848 718 690C876 532 876 277 718 119C560 -39 305 -39 147 119L115 150V58C115 26 90 0 58 0C26 0 0 26 0 58V289C0 321 26 347 58 347H288C320 347 346 321 346 289C346 257 320 231 288 231Z"},"folder":{"w":1038,"h":808,"d":"M160 346C181 310 219 289 260 289H865V231C865 167 814 116 750 116H538C507 116 479 104 457 82L409 34C387 12 358 0 327 0H115C51 0 0 52 0 116V620ZM210 375 8 721C-2 739 -2 761 8 779C18 797 37 808 58 808H779C800 808 819 798 829 780L1031 434C1041 416 1041 394 1031 376C1021 358 1002 347 981 347H260C239 347 220 357 210 375Z"},"plus":{"w":750,"h":750,"d":"M433 58C433 26 407 0 375 0C343 0 317 26 317 58V318H58C26 318 0 343 0 375C0 407 26 433 58 433H317V693C317 725 343 750 375 750C407 750 433 725 433 693V433H692C724 433 750 407 750 375C750 343 724 318 692 318H433Z"},"minus":{"w":750,"h":115,"d":"M750 57C750 25 724 0 692 0H58C26 0 0 25 0 57C0 89 26 115 58 115H692C724 115 750 89 750 57Z"},"book":{"w":808,"h":923,"d":"M173 0C77 0 0 77 0 173V750C0 846 77 923 173 923H692H750C782 923 808 897 808 865C808 833 782 807 750 807V692C782 692 808 666 808 634V57C808 25 782 0 750 0H692ZM173 692H635V807H173C141 807 115 782 115 750C115 718 141 692 173 692ZM231 259C231 243 244 231 260 231H606C622 231 635 243 635 259C635 275 622 288 606 288H260C244 288 231 275 231 259ZM260 346H606C622 346 635 359 635 375C635 391 622 404 606 404H260C244 404 231 391 231 375C231 359 244 346 260 346Z"},"bug":{"w":923,"h":923,"d":"M462 0C366 0 288 77 288 173V179C288 207 312 231 340 231H583C611 231 635 207 635 179V173C635 77 558 0 462 0ZM75 190H74C51 213 51 248 74 271L190 387C191 388 193 389 194 390C183 412 176 436 174 461H58C26 461 0 487 0 519C0 551 26 577 58 577H173C173 621 183 663 201 700C197 703 193 706 190 709L74 824C51 847 51 883 74 906C97 929 133 929 156 906L270 792C314 831 371 858 433 864V432C433 416 445 404 461 404C477 404 490 416 490 432V864C552 858 609 831 653 792L767 906C790 929 825 929 848 906C871 883 871 848 848 825L733 709C730 706 726 703 722 701C740 663 750 621 750 577H865C897 577 923 551 923 519C923 487 897 461 865 461H749C747 435 740 412 729 390C730 389 732 388 733 387L849 271C872 248 872 213 849 190C826 167 790 167 767 190L652 305L648 309C622 296 593 288 562 288H361C330 288 301 296 275 309C274 308 273 306 272 305L156 190C133 167 98 167 75 190Z"},"check":{"w":808,"h":578,"d":"M791 17C768 -6 732 -6 709 17L288 437L98 248C75 225 40 225 17 248C-6 271 -6 306 17 329L248 560C271 583 306 583 329 560L791 98C814 75 814 40 791 17Z"},"pause":{"w":577,"h":692,"d":"M87 0C39 0 0 39 0 87V606C0 654 39 692 87 692H144C192 692 231 654 231 606V87C231 39 192 0 144 0ZM433 0C385 0 346 39 346 87V606C346 654 385 692 433 692H490C538 692 577 654 577 606V87C577 39 538 0 490 0Z"},"search":{"w":923,"h":923,"d":"M750 375C750 168 582 0 375 0C168 0 0 168 0 375C0 582 168 750 375 750C458 750 534 723 596 678L824 906C847 929 883 929 906 906C929 883 929 847 906 824L678 596C723 534 750 458 750 375ZM375 634C232 634 115 518 115 375C115 232 232 115 375 115C518 115 635 232 635 375C635 518 518 634 375 634Z"},"chevron":{"w":810,"h":462,"d":"M364 445C387 468 422 468 445 445L792 99C815 76 815 40 792 17C769 -6 733 -6 710 17L405 322L99 17C76 -6 40 -6 17 17C-6 40 -6 76 17 99L364 445Z"},"chevronR":{"w":462,"h":808,"d":"M445 364V363L99 17C76 -6 40 -6 17 17C-6 40 -6 76 17 99L323 404L17 710C-6 733 -6 768 17 791C40 814 76 814 99 791L445 445C468 422 468 387 445 364Z"},"terminal":{"w":1038,"h":808,"d":"M17 99 322 404 17 710C-6 733 -6 768 17 791C40 814 76 814 99 791L445 445C468 422 468 387 445 364L99 17C76 -6 40 -6 17 17C-6 40 -6 76 17 99ZM462 693C430 693 404 718 404 750C404 782 430 808 462 808H981C1013 808 1038 782 1038 750C1038 718 1013 693 981 693Z"},"warning":{"w":923,"h":808,"d":"M462 0C436 0 412 14 399 36L10 700C-3 722 -3 750 10 772C23 794 46 808 72 808H851C877 808 901 794 914 772C927 750 926 722 913 700L524 36C511 14 488 0 462 0ZM462 231C486 231 505 250 505 274V476C505 500 486 520 462 520C438 520 418 500 418 476V274C418 250 438 231 462 231ZM519 635C519 667 494 693 462 693C430 693 404 667 404 635C404 603 430 577 462 577C494 577 519 603 519 635Z"},"desktop":{"w":1038,"h":923,"d":"M115 0C51 0 0 51 0 115V634C0 698 51 750 115 750H433L413 807H288C256 807 231 833 231 865C231 897 256 923 288 923H750C782 923 808 897 808 865C808 833 782 807 750 807H625L606 750H923C987 750 1038 698 1038 634V115C1038 51 987 0 923 0ZM923 115V519H115V115Z"}};
+
+
+/* ===== DATA: the only place entries are described. Add a program = add an object. ===== */
+const SECTIONS = [
+  { name: "Software", entries: [
+    { name: "yt-dlp-gui", title: "yt-dlp GUI", desc: "Lean Go + Gio desktop GUI for yt-dlp", status: "update", held: true, shortcut: true, shortcutOn: true,
+      installed: "2026-10-14 3f9e21a", latest: "2026-10-21 c84d0b7", branch: "main", branches: ["main", "dev"] },
+    { name: "ritz", title: "Ritz", desc: "Linux Steam launch wrapper", status: "missing", icon: "icons/icon-ritz-128.png", shortcut: true,
+      latest: "2026-10-02 4be8a30", branch: "main", branches: ["main"],
+      setup: ["Set Steam launch options to `ritz %command%`. Details: https://ritze03.github.io/ritz/"] },
+    { name: "ForzaTelemetryV3Launcher", title: "Forza Telemetry", desc: "Rust GUI that builds and launches ForzaTelemetryV3", status: "missing", shortcut: true,
+      latest: "2026-10-12 61ab0e4", branch: "main", branches: ["main", "next"] },
+    { name: "simple-screensharing", title: "Simple Screensharing", desc: "Friends screensharing: native egui client and QUIC relay", status: "needs", needs: "cargo", shortcut: true,
+      icon: "icons/icon-simple-screensharing.svg", latest: "2026-10-19 e02f7c9", branch: "main", branches: ["main", "relay-v2"] },
+    { name: "geofinder", title: "GeoFinder", desc: "Geobingo-style multiplayer party game", status: "update", modified: 3, shortcut: true, shortcutOn: true,
+      installed: "2026-10-01 2d81f06", latest: "2026-10-08 9c44d1a", branch: "main", branches: ["main"] },
+    { name: "gamescope-ritz", title: "Gamescope Ritz", desc: "gamescope built from source for ritz (needs sudo)", status: "ok", shortcut: false,
+      installed: "2026-10-09 0b7c5e2", latest: "2026-10-09 0b7c5e2", branch: "main", branches: ["main"] },
+    { name: "SteamAlt", title: "SteamAlt", desc: "Steam Userdata Mover", status: "ok", icon: "icons/icon-steamalt.svg", shortcut: true, shortcutOn: true,
+      installed: "2026-10-17 8a3f1c9", latest: "2026-10-17 8a3f1c9", branch: "main", branches: ["main"] },
+  ]},
+  { name: "Helpers", entries: [
+    { name: "ritz-get", title: "ritz-get", desc: "Install, update and remove Ritze03's programs", status: "ok", icon: "icons/icon-ritz-get.svg", shortcut: false,
+      installed: "2026-10-22 a596443", latest: "2026-10-22 a596443", branch: "main", branches: ["main"] },
+    { name: "ritz-get-gui", title: "ritz-get GUI", desc: "This window: browse, install and update Ritze03's programs", status: "update", self: true,
+      icon: "icons/icon-ritz-get-gui.svg", installed: "2026-10-19 5e7a2c1", latest: "2026-10-22 d40f9b8", branch: "main", branches: ["main"], shortcut: true, shortcutOn: true },
+    { name: "ccorral", title: "ccorral", desc: "Keeps Claude's processes in their own systemd slice", status: "ok", icon: "icons/icon-ccorral.svg", shortcut: false,
+      installed: "2026-10-18 7d1e0f2", latest: "2026-10-18 7d1e0f2", branch: "main", branches: ["main"] },
+    { name: "ts6tray", title: "TS6 Tray", desc: "Tray icon, mute control and channel notifications for TeamSpeak 6", status: "update", shortcut: false,
+      installed: "2026-10-20 a596443", latest: "2026-10-22 b12c3d4", branch: "main", branches: ["main", "dev"],
+      setup: ["In TeamSpeak: Settings → Remote Apps → enable it, port 5899",
+              "First start asks TeamSpeak for approval. Details: https://github.com/Ritze03/ts6tray#readme"] },
+  ]},
+  { name: "Websites", entries: [
+    { name: "cs2-alias-cycling", title: "CS2 Alias Cycling Generator", desc: "Generate alias cycles for CS2 configs", status: "web", icon: "icons/icon-cs2-alias-cycling.svg", shortcut: true,
+      url: "https://ritze03.github.io/stupid-pages/cs2-alias-cycling-generator.html", repo: "stupid-pages" },
+    { name: "cs2-chat-keybind", title: "CS2 Chat Keybind Generator", desc: "Bind chat messages to keys in CS2", status: "web", icon: "icons/icon-cs2-chat-keybind.svg", shortcut: true,
+      url: "https://ritze03.github.io/stupid-pages/cs2-chat-keybind-generator.html", repo: "stupid-pages" },
+    { name: "cs2-multimap", title: "CS2 Multimap Generator", desc: "Build multi-map configs for CS2", status: "web", icon: "icons/icon-cs2-multimap.svg", shortcut: true,
+      url: "https://ritze03.github.io/stupid-pages/cs2-multimap-generator.html", repo: "stupid-pages" },
+    { name: "simple-screensharing-web", title: "Simple Screensharing (Web)", desc: "Browser client for simple-screensharing", status: "web", icon: "icons/icon-simple-screensharing.svg", shortcut: true,
+      url: "https://ritze03.github.io/simple-screensharing/", repo: "simple-screensharing" },
+    { name: "walters-knaggertreff", title: "Walters Knaggertreff", desc: "Walters Knaggertreff website", status: "web", icon: "icons/icon-walters-knaggertreff.svg", shortcut: true, shortcutOn: true,
+      url: "https://ritze03.github.io/walters-knaggertreff/", repo: "walters-knaggertreff" },
+  ]},
+  { name: "Other", entries: [
+    { name: "ts6-themes", title: "Teamspeak 6 Themes", desc: "Themes for the TeamSpeak 6 client", status: "web", icon: "icons/icon-ts6-themes.svg", shortcut: true,
+      url: "https://ritze03.github.io/Teamspeak6Themes/", repo: "Teamspeak6Themes" },
+  ]},
+];
+SECTIONS.forEach(s => s.entries.forEach(e => { e.id = s.name + "/" + e.name; }));   // names can repeat across sections
+
+const BADGE = { ok: "Up to date", update: "Update available", missing: "Not installed", web: "Website" };
+const FILTERS = [
+  { id: "all", label: "All", test: () => true },
+  { id: "installed", label: "Installed", test: e => e.status === "ok" || e.status === "update" },
+  { id: "updates", label: "Updates", test: e => e.status === "update" },
+  { id: "missing", label: "Not installed", test: e => e.status === "missing" || e.status === "needs" },
+];
+
+const state = { view: "programs", filter: "all", sort: "default", query: "", selected: "Helpers/ts6tray", collapsed: {},
+  dir: "~/.local/share/ritz-get/src", shortcuts: "~/.local/share/applications", draft: {} };
+const ALL = SECTIONS.flatMap(s => s.entries);
+const byId = id => ALL.find(e => e.id === id);
+const disp = e => e.title || e.name;   // D39: clean display name; e.name stays the technical id used in commands
+
+/* ===== tiny element builder: h(tag, attrs, ...children) ===== */
+function h(tag, attrs = {}, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v == null || v === false) continue;
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of kids.flat()) if (c != null && c !== false) el.append(c);
+  return el;
+}
+/* Nerd Font glyph as SVG; the viewBox is the glyph's ink box, so it centres on its ink */
+function nf(name) {
+  const g = NF[name], ns = "http://www.w3.org/2000/svg";
+  const s = document.createElementNS(ns, "svg"); s.setAttribute("class", "nf"); s.setAttribute("viewBox", `0 0 ${g.w} ${g.h}`); s.setAttribute("aria-hidden", "true");
+  const p = document.createElementNS(ns, "path"); p.setAttribute("d", g.d); s.append(p); return s;
+}
+const glyph = name => h("span", { class: "g" }, nf(name));
+
+/* ===== helpers derived from data ===== */
+function icon(e, size) {
+  if (e.icon) return h("img", { class: "icon " + size, src: e.icon, alt: "", draggable: "false" });
+  return h("div", { class: "icon fb " + size, "aria-hidden": "true" }, h("span", {}, disp(e)[0].toUpperCase()));
+}
+const github = e => "https://github.com/Ritze03/" + (e.repo || e.name);
+const isWeb = e => e.status === "web";
+const isInstalled = e => e.status === "ok" || e.status === "update";
+const badgeText = e => e.status === "needs" ? "Needs " + e.needs : BADGE[e.status];
+function shortHost(url) { const u = new URL(url); const seg = u.pathname.split("/").filter(Boolean)[0]; return u.host + (seg && !seg.includes(".") ? "/" + seg : ""); }
+function versionLine(e) {
+  if (isWeb(e)) return [shortHost(e.url)];
+  if (e.status === "update") return [h("b", {}, e.installed), " installed ", h("span", { class: "arrow" }, "→"), " ", h("b", {}, e.latest), " latest"];
+  if (e.status === "ok") return [h("b", {}, e.installed), " · branch " + e.branch];
+  return ["latest ", h("b", {}, e.latest)];
+}
+function primary(e) {
+  if (isWeb(e)) return { text: "Open ↗", act: () => log(`$ xdg-open ${e.url}`, "cmd") };
+  if (e.status === "ok") return { text: "Up to date", disabled: true };
+  if (e.status === "update") return { text: "Update", act: () => doUpdate(e) };
+  return { text: "Install", act: () => doInstall(e) };
+}
+function pills(e, inSide) {
+  return [
+    h("span", { class: "pill s-" + e.status }, badgeText(e)),
+    e.held ? (inSide ? h("span", { class: "pill s-held" }, "Held")
+                     : h("span", { class: "pill s-held glyph", title: "Auto-update off (held)", "aria-label": "Auto-update off (held)" }, nf("pause"))) : null,
+    e.modified ? h("span", { class: "pill s-mod", title: `${e.modified} changed files; updates are skipped until you reset` }, "Modified") : null,
+    e.setup?.length ? h("span", { class: "pill s-setup", title: "Has manual setup steps" }, "Setup") : null];
+}
+
+/* ===== THE card renderer: every tile on the page comes from here ===== */
+function renderCard(e) {
+  const p = primary(e);
+  return h("div", { class: "tile", tabindex: "0", role: "option", "aria-selected": String(state.selected === e.id), "data-id": e.id,
+      onclick: () => select(e.id), onkeydown: ev => { if (ev.target === ev.currentTarget && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); select(e.id); } } },
+    h("div", { class: "tile-top" },
+      h("div", { class: "pills" }, pills(e, false)),
+      h("a", { class: "gh", href: ghUrl(e), target: "_blank", rel: "noopener", title: "Open on GitHub", "aria-label": "Open " + disp(e) + " on GitHub",
+        onclick: ev => { ev.stopPropagation(); log(`$ xdg-open ${ghUrl(e)}`, "cmd"); } }, "↗")),
+    h("div", { class: "tile-id" },
+      icon(e, "sm"),
+      h("div", { class: "txt" }, h("div", { class: "name" }, disp(e)), h("div", { class: "desc" }, e.desc))),
+    h("div", { class: "ver" }, versionLine(e)),
+    h("div", { class: "tile-actions" },
+      h("button", { class: "btn primary", disabled: p.disabled, onclick: ev => { ev.stopPropagation(); select(e.id); p.act && p.act(); } }, p.text),
+      h("button", { class: "btn sq more", "aria-label": "More actions for " + disp(e), "aria-haspopup": "menu", onclick: ev => { ev.stopPropagation(); openPop(e, ev.currentTarget); } }, "…")));
+}
+
+/* ===== THE group renderer: chevron + accent title + count + rule, wrapping grid of tiles ===== */
+function renderGroup(section, visible) {
+  const collapsed = !!state.collapsed[section.name];
+  return h("section", { class: "group", "data-collapsed": String(collapsed) },
+    h("button", { class: "group-head", "aria-expanded": String(!collapsed),
+        onclick: () => { state.collapsed[section.name] = !collapsed; render(); } },
+      h("span", { class: "chev" }, nf("chevron")),
+      h("span", { class: "title" }, section.name),
+      h("span", { class: "count" }, String(visible.length)),
+      h("span", { class: "rule" })),
+    h("div", { class: "grid", role: "listbox", "aria-label": section.name }, visible.map(renderCard)));
+}
+
+/* ===== side panel ===== */
+const card = (title, ...kids) => h("section", { class: "card" }, h("h2", { class: "title", style: "margin:0" }, title), ...kids);
+const row = (label, ...ctl) => h("div", { class: "row" }, h("span", { class: "row-label" }, label), h("div", { class: "row-ctl end" }, ...ctl));
+function renderSide() {
+  const side = document.getElementById("side");
+  const e = byId(state.selected);
+  side.replaceChildren();
+  if (!e) { side.append(h("div", { class: "side-inner" }, h("div", { class: "empty" }, "Select a program to see its actions."))); return; }
+  const meta = isWeb(e)
+    ? [["id", e.name], ["url", shortHost(e.url)], ["source", "Ritze03/" + e.repo]]
+    : [["id", e.name], ["installed", e.installed || "no"], ["latest", e.latest], ["source", "Ritze03/" + e.name]]
+        .concat(e.needs ? [["missing tool", e.needs]] : [], e.modified ? [["local", `${e.modified} changed files`]] : []);
+  const hint = !isInstalled(e) ? ["available once installed", ""] : e.modified ? ["modified · updates skipped until you reset", "warn"]
+    : e.held ? [`held · ritz-get unhold ${e.name}`, ""] : ["included in Update all", ""];
+  side.append(h("div", { class: "side-inner" },
+    h("div", { class: "hero" }, icon(e, "lg"),
+      h("div", { class: "name" }, disp(e)),
+      h("div", { class: "pills" }, pills(e, true)),
+      h("div", { class: "desc" }, e.desc)),
+    isWeb(e) ? null : card("Program",
+      h("div", { class: "row" }, h("span", { class: "row-label", id: "au-label" }, "Auto-update"), h("div", { class: "row-ctl end" }, autoSwitch(e, "au-label"))),
+      h("div", { class: "caption " + hint[1] }, hint[0]),
+      h("div", { class: "row" }, h("label", { class: "row-label", for: "branch" }, "Branch"),
+        h("select", { class: "input", id: "branch", onchange: ev => { e.branch = ev.target.value; log(`${e.name}: switched to branch ${e.branch}`); render(); } },
+          e.branches.map(b => h("option", { value: b, selected: b === e.branch }, b))))),
+    e.setup?.length ? card("Additional steps required",
+      h("ol", { class: "setup-list" }, e.setup.map(line => h("li", {}, richLine(line))))) : null,
+    card("Actions", h("div", { class: "actions" }, renderActions(e))),
+    card("Details", meta.map(([k, v]) => h("div", { class: "row" }, h("span", { class: "row-label", style: "color:var(--dim);font-size:var(--fs-mono)" }, k), h("span", { class: "row-val" }, v))))));
+}
+
+/* ===== setup line: plain text, URLs become links, `backticks` become code ===== */
+function richLine(text) {
+  return text.split(/(https?:\/\/[^\s]+|`[^`]+`)/).filter(Boolean).map(part =>
+    /^https?:\/\//.test(part) ? h("a", { href: part, target: "_blank", rel: "noopener" }, part)
+    : part.startsWith("`") ? h("code", {}, part.slice(1, -1)) : part);
+}
+
+/* ===== links built from the entry ===== */
+const issuesUrl = e => github(e) + "/issues/new";
+const ghUrl = e => github(e);                                   // repo root: tile icon + "Open on GitHub"
+const readmeUrl = e => `${github(e)}/tree/${e.branch}#readme`;  // current branch's README (programs only)
+function extLink(url, cls, kids, after) {
+  return h("a", { class: cls, href: url, target: "_blank", rel: "noopener",
+    onclick: ev => { ev.stopPropagation(); log(`$ xdg-open ${url}`, "cmd"); after && after(); } }, kids);
+}
+
+/* ===== auto-update switch: one component, used by the side panel and the popover ===== */
+function autoSwitch(e, labelId) {
+  return h("button", { class: "switch", role: "switch", "aria-checked": String(!e.held), "aria-labelledby": labelId, "data-switch": e.id,
+    disabled: !isInstalled(e), onclick: ev => { ev.stopPropagation(); setHeld(e, !e.held); } });
+}
+function setHeld(e, held) {
+  e.held = held;
+  log(`$ ritz-get ${held ? "hold" : "unhold"} ${e.name}`, "cmd");
+  render();
+  document.querySelectorAll(`[data-switch="${CSS.escape(e.id)}"]`).forEach(s => s.setAttribute("aria-checked", String(!held))); // keeps the open popover in sync
+}
+
+/* ===== ONE action list, used by the side panel and the "…" popover =====
+   Groups in fixed order: 1 lifecycle · 2 local (shortcut, folder) · 3 GitHub. A separator goes between groups. */
+function actionGroups(e) {
+  const shortcut = e.shortcut === false ? null      // D37: no shortcut capability, no shortcut action
+    : e.shortcutOn ? { g: "minus", text: "Remove shortcut", act: () => toggleShortcut(e) }
+    : { g: "plus", text: "Create shortcut", act: () => toggleShortcut(e), disabled: !isWeb(e) && !isInstalled(e) };
+  if (isWeb(e)) return [[{ g: "ext", text: "Open", href: e.url }], [shortcut].filter(Boolean)];
+  const life = e.status === "update" ? [{ g: "refresh", text: "Update", act: () => doUpdate(e) }]
+    : e.status === "ok" ? [{ g: "check", text: "Up to date", disabled: true }]
+    : [{ g: "download", text: "Install", act: () => doInstall(e) }];
+  if (isInstalled(e)) life.push({ g: "trash", text: "Remove", act: () => doRemove(e), danger: true });
+  if (e.modified) life.push({ g: "undo", text: "Reset (discard local changes)", act: () => confirmReset(e), danger: true });
+  return [life,
+    [shortcut, { g: "folder", text: "Open folder", act: () => log(`$ xdg-open ${state.dir}/${e.name}`, "cmd"), disabled: !isInstalled(e) }].filter(Boolean),
+    [{ g: "github", text: "Open on GitHub", href: ghUrl(e) }, { g: "book", text: "Open README", href: readmeUrl(e) }, { g: "bug", text: "Report issue", href: issuesUrl(e) }]];
+}
+function renderActions(e, after) {
+  const one = a => a.href
+    ? extLink(a.href, "action", [glyph(a.g), a.text], after)
+    : h("button", { class: "action" + (a.danger ? " danger" : ""), role: after ? "menuitem" : null, disabled: a.disabled,
+        onclick: ev => { ev.stopPropagation(); after && after(); a.act && a.act(); } }, glyph(a.g), a.text);
+  return actionGroups(e).filter(g => g.length).flatMap((g, i) => [i ? h("div", { class: "sep" }) : null, ...g.map(one)]);
+}
+
+/* ===== modal: confirm before discarding local changes (in-page, no browser dialog) ===== */
+let modal = null;
+function closeModal() { if (modal) { modal.back.remove(); document.removeEventListener("keydown", modal.keys, true); modal.ret?.focus?.(); modal = null; } }
+function confirmReset(e) {
+  const ok = () => { closeModal(); doReset(e); };
+  const cancelBtn = h("button", { class: "btn", onclick: closeModal }, "Cancel");
+  const back = h("div", { class: "modal-back", onclick: ev => { if (ev.target === back) closeModal(); } },
+    h("div", { class: "modal", role: "dialog", "aria-modal": "true", "aria-labelledby": "reset-title" },
+      h("h2", { id: "reset-title" }, `Discard local changes to ${disp(e)}?`),
+      h("p", {}, `${e.modified} changed files in ${state.dir}/${e.name} will be lost. ritz-get re-clones origin/${e.branch} and re-installs it.`),
+      h("div", { class: "btns" }, cancelBtn, h("button", { class: "btn danger", id: "reset-ok", onclick: ok }, "Discard and reset"))));
+  const keys = ev => {
+    if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); closeModal(); }
+    else if (ev.key === "Enter" && document.activeElement !== cancelBtn) { ev.preventDefault(); ev.stopPropagation(); ok(); }
+  };
+  modal = { back, keys, ret: document.activeElement };
+  document.addEventListener("keydown", keys, true);
+  document.body.append(back);
+  back.querySelector("#reset-ok").focus();
+}
+function doReset(e) {
+  log(`$ ritz-get reset ${e.name}`, "cmd");
+  log(`${e.name}: discarded ${e.modified} changed files, re-cloned origin/${e.branch}`, "ok");
+  e.modified = 0; e.held = false; render();
+}
+
+/* ===== popover for "…" ===== */
+let pop = null;
+function closePop() { if (pop) { pop.remove(); pop = null; } }
+function openPop(e, anchor) {
+  const r = anchor.getBoundingClientRect();
+  closePop(); select(e.id);
+  const item = (kids, act) => h("button", { class: "action", role: "menuitem", onclick: () => { closePop(); act && act(); } }, kids);
+  const branchList = h("div", { class: "branches", hidden: true },
+    (e.branches || []).map(b => item([b === e.branch ? "● " : "○ ", b], () => { e.branch = b; log(`${e.name}: switched to branch ${b}`); render(); })));
+  pop = h("div", { class: "pop", role: "menu", "aria-label": "Actions for " + disp(e) },
+    h("div", { class: "pop-head" }, disp(e)), h("div", { class: "sep" }),
+    isWeb(e) ? null : h("button", { class: "action", role: "menuitem", onclick: ev => { ev.stopPropagation(); branchList.hidden = !branchList.hidden; } },
+      glyph("chevronR"), "Branch", h("span", { class: "sub" }, e.branch)),
+    isWeb(e) ? null : branchList,
+    isWeb(e) ? null : h("div", { class: "switch-item" }, h("span", { class: "g" }, nf("refresh")),
+      h("span", { class: "lbl", id: "pop-au" }, "Auto-update"), autoSwitch(e, "pop-au")),
+    isWeb(e) ? null : h("div", { class: "sep" }),
+    renderActions(e, closePop));
+  document.body.append(pop);
+  const pw = pop.offsetWidth, ph = pop.offsetHeight;
+  pop.style.left = Math.max(8, Math.min(r.right - pw, innerWidth - pw - 8)) + "px";
+  pop.style.top = Math.max(8, r.bottom + 4 + ph > innerHeight ? r.top - ph - 4 : r.bottom + 4) + "px";
+  pop.addEventListener("click", ev => ev.stopPropagation());
+}
+document.addEventListener("click", closePop);
+document.addEventListener("keydown", ev => { if (ev.key === "Escape") closePop(); });
+addEventListener("resize", closePop);
+
+/* ===== fake actions (they only write to the log) ===== */
+function doUpdate(e, fromAll) {
+  if (!fromAll) log(`$ ritz-get update ${e.name}`, "cmd");
+  if (e.modified) { log(`${e.name}: SKIPPED (local changes; ritz-get reset ${e.name} to discard them)`, "err"); return; }
+  log(`${e.name}: fetching origin/${e.branch}`); log(`${e.name}: building`);
+  log(`${e.name}: updated ${e.installed.split(" ")[1]} -> ${e.latest.split(" ")[1]}`, "ok");
+  e.installed = e.latest; e.status = "ok"; render();
+  if (e.self) document.getElementById("restartbar").hidden = false; // the running app was replaced on disk
+}
+function doInstall(e) {
+  log(`$ ritz-get install ${e.name}`, "cmd");
+  if (e.status === "needs") { log(`${e.name}: error: ${e.needs} not found in PATH. Install ${e.needs} first, then retry.`, "err"); return; }
+  log(`${e.name}: cloning github.com/Ritze03/${e.name} into ${state.dir}`); log(`${e.name}: building`);
+  log(`${e.name}: installed ${e.latest.split(" ")[1]}`, "ok");
+  if (e.setup?.length) { log("Additional steps required:", "note"); e.setup.forEach((l, i) => log(`  ${i + 1}. ${l}`, "note")); }
+  e.installed = e.latest; e.status = "ok"; render();
+}
+function doRemove(e) { log(`$ ritz-get remove ${e.name}`, "cmd"); log(`${e.name}: removed`); e.status = "missing"; e.installed = null; e.shortcutOn = false; e.held = false; e.modified = 0; render(); }
+function toggleShortcut(e) { e.shortcutOn = !e.shortcutOn; log(`${e.name}: ${e.shortcutOn ? "created" : "removed"} shortcut in ${state.shortcuts}`); render(); }
+
+/* ===== settings view (D18/D34 repo folder, D35 shortcut folder) ===== */
+function settingRow(label, key, tip, cmd) {
+  const id = "set-" + key;
+  const inp = h("input", { class: "input", id, spellcheck: "false", autocomplete: "off",
+    oninput: ev => { state.draft[key] = ev.target.value; },
+    onkeydown: ev => { if (ev.key === "Enter") apply(); } });
+  inp.value = state.draft[key] ?? state[key];
+  const apply = () => { const p = inp.value.trim() || state[key]; state[key] = p; delete state.draft[key]; log(cmd(p), "cmd"); render(); };
+  return h("div", { class: "row stackable" }, h("label", { class: "row-label", for: id, title: tip }, label),
+    h("div", { class: "row-ctl" }, inp, h("button", { class: "btn", onclick: apply }, "Change…")));
+}
+function renderSettings() {
+  return h("div", { class: "settings" },
+    h("div", { class: "settings-head" }, h("span", { class: "title" }, "Settings"), h("span", { class: "rule" })),
+    card("Folders",
+      settingRow("Repo folder", "dir", "Where ritz-get keeps every clone. Change… moves them all in one step (ritz-get dir PATH).", p => `$ ritz-get dir ${p}`),
+      settingRow("Shortcut folder", "shortcuts", "Where .desktop shortcuts go. Change… moves the existing ones (ritz-get shortcuts PATH).", p => `$ ritz-get shortcuts ${p}`)),
+    card("Config",
+      h("div", { class: "row" }, h("span", { class: "row-label" }, "Config file"), h("span", { class: "row-val" }, "~/.config/ritz-get/config")),
+      h("div", { class: "row" }, h("span", { class: "row-label" }, "Programs"), h("span", { class: "row-val" }, `${ALL.filter(isInstalled).length} installed · ${ALL.filter(e => e.shortcutOn).length} shortcuts`))));
+}
+
+/* ===== log drawer ===== */
+const LOG = [];
+let clock = new Date(2026, 9, 22, 14, 3, 12);
+function log(text, kind) {
+  clock = new Date(clock.getTime() + 1000 + Math.floor(Math.random() * 3000));
+  LOG.push({ t: clock.toTimeString().slice(0, 8), text, kind });
+  const body = document.getElementById("logbody");
+  body.replaceChildren(...LOG.map(l => h("div", { class: "log-line " + (l.kind || "") }, h("span", { class: "t" }, l.t), h("span", {}, l.text))));
+  body.scrollTop = body.scrollHeight;
+  document.getElementById("logcount").textContent = LOG.length + " lines";
+}
+document.getElementById("loghead").addEventListener("click", ev => {
+  const el = document.getElementById("log"), c = el.dataset.collapsed !== "true";
+  el.dataset.collapsed = String(c); ev.currentTarget.setAttribute("aria-expanded", String(!c));
+});
+
+/* ===== top bar + render loop ===== */
+function select(id) { state.selected = id; render(); }
+/* sort WITHIN a section; sections keep manifest order. Array.sort is stable, so equal ranks (all websites) keep data order */
+const SORTS = {
+  default: null,
+  name: (a, b) => disp(a).localeCompare(disp(b), undefined, { sensitivity: "base" }),
+  updates: (a, b) => updRank(a) - updRank(b),
+  installed: (a, b) => (isWeb(a) ? 2 : isInstalled(a) ? 0 : 1) - (isWeb(b) ? 2 : isInstalled(b) ? 0 : 1),
+};
+function updRank(e) {
+  if (isWeb(e)) return 9;
+  if (e.status === "update" && !e.modified) return 0;
+  if (e.modified || e.status === "needs") return 1;
+  return e.status === "ok" ? 2 : 3;
+}
+const sortEntries = list => SORTS[state.sort] ? [...list].sort(SORTS[state.sort]) : list;
+function matches(e) {
+  const q = state.query.trim().toLowerCase();
+  return FILTERS.find(f => f.id === state.filter).test(e) && (!q || (disp(e) + " " + e.name + " " + e.desc).toLowerCase().includes(q));
+}
+function render() {
+  document.getElementById("tabs").replaceChildren(...FILTERS.map(f => {
+    const n = ALL.filter(f.test).length;
+    return h("button", { "aria-pressed": String(state.view === "programs" && state.filter === f.id),
+        onclick: () => { state.filter = f.id; state.view = "programs"; render(); } },
+      f.label, h("span", { class: "n" + (f.id === "updates" && n ? " hot" : "") }, String(n)));
+  }));
+  const nUpd = ALL.filter(e => e.status === "update").length;
+  const nFree = ALL.filter(e => e.status === "update" && !e.held && !e.modified).length; // held and modified are skipped by Update all
+  const nHeld = ALL.filter(e => e.held).length;
+  const ua = document.getElementById("updall"); ua.textContent = `Update all (${nFree})`; ua.disabled = nFree === 0;
+  ua.title = nUpd > nFree ? `${nUpd - nFree} held or modified update${nUpd - nFree === 1 ? "" : "s"} skipped` : "";
+  document.getElementById("gear").setAttribute("aria-pressed", String(state.view === "settings"));
+  document.getElementById("pagepill").textContent = state.view === "settings" ? "Settings" : "Programs";
+  const groups = document.getElementById("groups");
+  if (state.view === "settings") groups.replaceChildren(renderSettings());
+  else {
+    const kids = SECTIONS.map(s => [s, sortEntries(s.entries.filter(matches))]).filter(([, v]) => v.length).map(([s, v]) => renderGroup(s, v));
+    groups.replaceChildren(...(kids.length ? kids : [h("div", { class: "empty" }, "No programs match. Clear the search or pick another filter.")]));
+  }
+  renderSide();
+  document.getElementById("statusleft").textContent =
+    `checked 2 min ago · ${nUpd} update${nUpd === 1 ? "" : "s"} · ${ALL.filter(isInstalled).length} installed` + (nHeld ? ` · ${nHeld} held` : "");
+}
+/* sort choice: localStorage stands in for the real app's config file */
+try { const v = localStorage.getItem("ritz-get-gui.sort"); if (v && v in SORTS) state.sort = v; } catch (_) {}
+const sortSel = document.getElementById("sort");
+sortSel.value = state.sort;
+sortSel.addEventListener("change", ev => { state.sort = ev.target.value; try { localStorage.setItem("ritz-get-gui.sort", state.sort); } catch (_) {} render(); });
+document.getElementById("gear").append(nf("gear"));
+document.getElementById("searchicon").append(nf("search"));
+document.getElementById("logchev").append(nf("chevron"));
+document.getElementById("logterm").append(nf("terminal"));
+document.getElementById("gear").addEventListener("click", () => { state.view = state.view === "settings" ? "programs" : "settings"; render(); });
+document.getElementById("restart").addEventListener("click", () => { log("restart ritz-get-gui (exec ~/.local/bin/ritz-get-gui)"); document.getElementById("restartbar").hidden = true; });
+document.getElementById("search").addEventListener("input", ev => { state.query = ev.target.value; state.view = "programs"; render(); });
+document.getElementById("updall").addEventListener("click", () => { log("$ ritz-get update --yes", "cmd"); ALL.filter(e => e.status === "update").forEach(e =>
+  e.held ? log(`${e.name}: held (ritz-get unhold ${e.name})`) : doUpdate(e, true)); });  // doUpdate skips modified checkouts
+document.getElementById("check").addEventListener("click", () => {
+  log(`checking ${ALL.filter(e => !isWeb(e)).length} repositories on github.com/Ritze03`);
+  log(`up to date: ${ALL.filter(e => e.status === "ok").map(e => e.name).join(", ")}`);
+  log(`updates: ${ALL.filter(e => e.status === "update").map(e => e.name).join(", ") || "none"}`);
+});
+
+/* example output so the drawer opens in a working state */
+log("ts6tray: fetching origin/main");
+log("ts6tray: building");
+log("go: downloading go1.27.1 (linux/amd64)");
+log("ts6tray: updated a596443 -> b12c3d4", "ok");
+log("simple-screensharing: error: cargo not found in PATH. Install cargo first, then retry.", "err");
+render();
+</script>

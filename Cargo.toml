@@ -1,0 +1,19 @@
+[package]
+name = "ritz-get-gui"
+version = "0.1.0"
+edition = "2024"
+description = "Graphite-styled egui front end for ritz-get"
+publish = false
+
+[[bin]]
+name = "ritz-get-gui"
+path = "src/main.rs"
+
+[dependencies]
+eframe = "0.33"
+egui = "0.33"
+# `file` = file:// image loader (D59), `image` = PNG decoding for it.
+egui_extras = { version = "0.33", features = ["image", "file"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+# Remote icon fetching (I6, D59).
+ureq = "3"

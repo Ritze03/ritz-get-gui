@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=ritz-get-gui
+Comment=Graphical front end for ritz-get
+Exec=ritz-get-gui
+Icon=ritz-get-gui
+Categories=System;PackageManager;
+StartupWMClass=ritz-get-gui

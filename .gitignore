@@ -1,0 +1,9 @@
+# Build output (target/shots/ lives here on purpose: screenshots are never committed)
+target/
+build/
+
+# Claude Code / orchestration state
+.claude/
+
+# Tool scratch
+.playwright-mcp/

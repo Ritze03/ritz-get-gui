@@ -1,0 +1,291 @@
+#!/bin/sh
+# Fake `ritz-get` CLI for ritz-get-gui tests. POSIX sh (dash-safe). Use via RITZ_GET=<abs path>.
+#
+# Environment (all optional):
+#   FAKE_RITZ_GET_FIXTURE          porcelain file for `list --porcelain`   (default: <script dir>/fixtures/full.porcelain)
+#   FAKE_RITZ_GET_OFFLINE_FIXTURE  porcelain file for `list --offline ...` (default: FAKE_RITZ_GET_FIXTURE)
+#   FAKE_RITZ_GET_LOG              append one call-log line per invocation (see below)
+#   FAKE_RITZ_GET_SCENARIO         ok (default) | failed (exit 1) | deps (exit 3, missing: + deps:)
+#                                  | deps-nodeps (exit 3, missing: only) | needs-root (exit 4) | busy (exit 5)
+#                                  Queries (list, branches, dir/shortcuts without PATH) always succeed.
+#                                  busy/failed apply to every changing command; deps/deps-nodeps/needs-root
+#                                  only to install, update, switch, reset (the ones that run install.sh).
+#   FAKE_RITZ_GET_DELAY            seconds slept between streamed lines (default 0.05)
+#   FAKE_RITZ_GET_UPDATE_ALL_FILE  text file; `update` without a NAME streams its lines (one per DELAY) instead of the
+#                                  built-in geofinder/bar/baz/qux output, so names can match the fixture's updatable entries
+#   FAKE_RITZ_GET_NO_PROGRESS      set (non-empty): omit the `#start` / `#progress` lines, like an older ritz-get
+#                                  (they are printed whenever RITZ_GET_GUI=1, the GUI always sets it; PORCELAIN.md
+#                                  "Progress lines"). Also drops the `#` lines of FAKE_RITZ_GET_UPDATE_ALL_FILE.
+#   FAKE_RITZ_GET_DIR              what `dir` prints (default $HOME/.local/share/ritz-get)
+#   FAKE_RITZ_GET_REMOVED_FIXTURE  porcelain file; once set, a successful `remove NAME` deletes $FAKE_RITZ_GET_DIR/NAME
+#                                  and every later `list` prints this file instead (marker: <file>.done, delete it to reset)
+#   FAKE_RITZ_GET_INSTALLED_FIXTURE  porcelain file; once set, a successful `install NAME` makes every later `list` print
+#                                  this file instead (marker: <file>.installed, delete it to reset). `remove` is unaffected.
+#
+# Commands: list [--offline] --porcelain [--all] | branches NAME | install NAME [--branch B]
+#   | update [NAME] --yes | remove NAME | switch NAME BRANCH | reset NAME --yes | hold NAME | unhold NAME
+#   | open NAME | shortcut NAME [--remove] | shortcuts [PATH] | dir [PATH [--yes]]
+#   install takes several NAMEs (M = their number); an unknown name (`nosuch`) prints the error between its pair.
+#   update NAME / switch / reset: one pair, 1/1. Plain `update`: phase 1 prints the result lines of the programs
+#   it will not touch (no markers), phase 2 the apply list (`#start`, result, `#progress`).
+#   update and reset exit 2 without --yes (stdin is never a terminal for the GUI).
+#
+# Call log (FAKE_RITZ_GET_LOG), one line appended when the invocation ends:
+#   start=<epoch.nanos> end=<epoch.nanos> exit=<n> gui=<RITZ_GET_GUI or -> sudo=<RITZ_GET_SUDO or -> tty=<0|1> argv=<args space-joined>
+#   gui/sudo are `-` when the variable is unset; tty=1 when stdin is a terminal.
+#   Example: start=1761300000.123456789 end=1761300000.623456789 exit=0 gui=1 sudo=pkexec tty=0 argv=install foo --branch dev
+
+script_dir=$(cd "$(dirname "$0")" && pwd)
+start=$(date +%s.%N)
+argv="$*"
+delay=${FAKE_RITZ_GET_DELAY:-0.05}
+scenario=${FAKE_RITZ_GET_SCENARIO:-ok}
+
+log_call() {
+    code=$?
+    [ -n "${FAKE_RITZ_GET_LOG:-}" ] || return 0
+    end=$(date +%s.%N)
+    gui=-; [ "${RITZ_GET_GUI+set}" = set ] && gui=$RITZ_GET_GUI
+    sudo=-; [ "${RITZ_GET_SUDO+set}" = set ] && sudo=$RITZ_GET_SUDO
+    tty=0; [ -t 0 ] && tty=1
+    printf 'start=%s end=%s exit=%s gui=%s sudo=%s tty=%s argv=%s\n' \
+        "$start" "$end" "$code" "$gui" "$sudo" "$tty" "$argv" >> "$FAKE_RITZ_GET_LOG"
+}
+trap log_call EXIT
+
+pause() { sleep "$delay"; }
+# `#start NAME` / `#progress NAME N/M` (stdout, only under RITZ_GET_GUI=1 and without FAKE_RITZ_GET_NO_PROGRESS)
+marks_on() { [ "${RITZ_GET_GUI:-}" = 1 ] && [ -z "${FAKE_RITZ_GET_NO_PROGRESS:-}" ]; }
+mstart() { if marks_on; then printf '#start %s\n' "$1"; fi; return 0; }
+mprog() { if marks_on; then printf '#progress %s %s/%s\n' "$1" "$2" "$3"; fi; return 0; }
+say() { printf '%s\n' "$1"; pause; }
+err() { printf '%s\n' "$1" >&2; pause; }
+die() { printf '%s\n' "$1" >&2; exit "${2:-1}"; }
+usage() { die "usage: ritz-get $1" 2; }
+
+# Lock-taking command: the busy scenario fails immediately.
+lock() {
+    if [ "$scenario" = busy ]; then
+        err "busy: another ritz-get is running"
+        exit 5
+    fi
+}
+
+# Failure scenarios for install.sh-running commands. $1 = program name, $2 = 1 for update (prints the summary).
+scenario_fail() {
+    prog=$1; is_update=${2:-0}
+    case $scenario in
+        failed|deps|deps-nodeps|needs-root) mstart "$prog" ;;
+    esac
+    case $scenario in
+        failed)
+            say "Building $prog ..."
+            say "$prog: FAILED (install.sh exit 1)"
+            mprog "$prog" ${mi:-1} ${mn:-1}
+            say "FAILED — your installed version is unchanged and still works"
+            [ "$is_update" = 1 ] && say "0 updated, 0 skipped, 1 failed"
+            exit 1 ;;
+        deps|deps-nodeps)
+            say "Building $prog ..."
+            err "missing: cmake (try: pacman:cmake dnf:cmake apt:cmake)"
+            err "missing: pkg-config (try: pacman:pkgconf dnf:pkgconf-pkg-config apt:pkg-config)"
+            say "$prog: FAILED (needs: cmake, pkg-config)"
+            mprog "$prog" ${mi:-1} ${mn:-1}
+            say "FAILED — your installed version is unchanged and still works"
+            [ "$is_update" = 1 ] && say "0 updated, 0 skipped, 1 failed"
+            [ "$scenario" = deps ] && say "deps: sudo pacman -S --needed cmake pkgconf"
+            exit 3 ;;
+        needs-root)
+            say "Building $prog ..."
+            err "needs root: $prog needs a system package; run 'ritz-get install $prog' in a terminal"
+            mprog "$prog" ${mi:-1} ${mn:-1}
+            err "needs root: $prog needs a system package; run 'ritz-get install $prog' in a terminal"
+            exit 4 ;;
+    esac
+}
+
+[ $# -ge 1 ] || usage "COMMAND"
+cmd=$1; shift
+
+case $cmd in
+    list)
+        offline=0; porcelain=0
+        for a in "$@"; do
+            case $a in
+                --offline) offline=1 ;;
+                --porcelain) porcelain=1 ;;
+                *) ;;
+            esac
+        done
+        [ $porcelain = 1 ] || usage "list [--offline] --porcelain [--all]"
+        fixture=${FAKE_RITZ_GET_FIXTURE:-$script_dir/fixtures/full.porcelain}
+        if [ $offline = 1 ]; then
+            fixture=${FAKE_RITZ_GET_OFFLINE_FIXTURE:-$fixture}
+        fi
+        if [ -n "${FAKE_RITZ_GET_INSTALLED_FIXTURE:-}" ] && [ -e "$FAKE_RITZ_GET_INSTALLED_FIXTURE.installed" ]; then
+            fixture=$FAKE_RITZ_GET_INSTALLED_FIXTURE
+        fi
+        if [ -n "${FAKE_RITZ_GET_REMOVED_FIXTURE:-}" ] && [ -e "$FAKE_RITZ_GET_REMOVED_FIXTURE.done" ]; then
+            fixture=$FAKE_RITZ_GET_REMOVED_FIXTURE
+        fi
+        [ -r "$fixture" ] || die "fake-ritz-get: cannot read fixture $fixture"
+        cat "$fixture"
+        ;;
+    branches)
+        [ $# -ge 1 ] || usage "branches NAME"
+        printf '* main\n  dev\n  legacy\n'
+        ;;
+    install)
+        [ $# -ge 1 ] || usage "install NAME... [--branch B]"
+        names=; branch=main
+        while [ $# -gt 0 ]; do
+            case $1 in
+                --branch) [ $# -ge 2 ] || usage "install NAME [--branch B]"; branch=$2; shift ;;
+                -*) usage "install NAME [--branch B]" ;;
+                *) names="$names $1" ;;
+            esac
+            shift
+        done
+        [ -n "$names" ] || usage "install NAME... [--branch B]"
+        lock
+        mn=0; for name in $names; do mn=$((mn + 1)); done
+        mi=0
+        for name in $names; do
+            mi=$((mi + 1))
+            if [ "$name" = nosuch ]; then
+                mstart "$name"
+                err "$name: unknown program"
+                mprog "$name" "$mi" "$mn"
+                continue
+            fi
+            scenario_fail "$name" 0
+            mstart "$name"
+            say "Cloning $name ($branch) ..."
+            say "Building $name ..."
+            say "Installed $name"
+            mprog "$name" "$mi" "$mn"
+            # PORCELAIN.md: after a successful install, "Additional steps required:" + indented setup lines (the fixture's S lines)
+            steps=$(awk -F'\t' -v n="$name" '$1=="S" && $2==n { print "  " $3 }' "${FAKE_RITZ_GET_FIXTURE:-$script_dir/fixtures/full.porcelain}" 2>/dev/null)
+            if [ -n "$steps" ]; then say "Additional steps required:"; printf '%s\n' "$steps"; fi
+        done
+        case " $names " in *" nosuch "*) exit 1 ;; esac
+        [ -z "${FAKE_RITZ_GET_INSTALLED_FIXTURE:-}" ] || : > "$FAKE_RITZ_GET_INSTALLED_FIXTURE.installed"
+        ;;
+    update)
+        name=; yes=0
+        for a in "$@"; do
+            case $a in
+                --yes) yes=1 ;;
+                *) name=$a ;;
+            esac
+        done
+        [ $yes = 1 ] || die "update needs --yes when stdin is not a terminal" 2
+        lock
+        scenario_fail "${name:-geofinder}" 1
+        say "Checking for updates ..."
+        if [ -n "$name" ]; then
+            mstart "$name"
+            say "$name: updated 2026-10-01 abc1234 -> 2026-10-20 def5678"
+            mprog "$name" 1 1
+            say "1 updated, 0 skipped, 0 failed"
+        elif [ -n "${FAKE_RITZ_GET_UPDATE_ALL_FILE:-}" ]; then
+            # one `say` per line of the file (result lines, markers, summary), with the usual delay between them
+            while IFS= read -r line; do
+                case $line in '#'*) marks_on || continue ;; esac
+                say "$line"
+            done < "$FAKE_RITZ_GET_UPDATE_ALL_FILE"
+        else
+            # phase 1: what it will not touch (no markers); phase 2: the apply list
+            say "bar: held (ritz-get unhold bar)"
+            say "baz: SKIPPED (local changes; ritz-get reset baz to discard them)"
+            say "qux: up to date"
+            mstart geofinder
+            say "geofinder: updated 2026-10-01 abc1234 -> 2026-10-20 def5678"
+            mprog geofinder 1 1
+            say "1 updated, 2 skipped, 0 failed"
+        fi
+        ;;
+    remove|uninstall)
+        [ $# -ge 1 ] || usage "remove NAME"
+        lock
+        [ "$scenario" = failed ] && die "$1: FAILED (not installed)"
+        if [ -n "${FAKE_RITZ_GET_REMOVED_FIXTURE:-}" ]; then
+            rm -rf "${FAKE_RITZ_GET_DIR:?}/$1"
+            : > "$FAKE_RITZ_GET_REMOVED_FIXTURE.done"
+        fi
+        say "Removing $1 ..."
+        say "Removed $1"
+        ;;
+    switch)
+        [ $# -ge 2 ] || usage "switch NAME BRANCH"
+        lock
+        scenario_fail "$1" 0
+        mstart "$1"
+        say "Switching $1 to $2 ..."
+        say "Building $1 ..."
+        say "$1: updated 2026-10-01 abc1234 -> 2026-10-20 def5678"
+        mprog "$1" 1 1
+        ;;
+    reset)
+        [ $# -ge 1 ] || usage "reset NAME --yes"
+        name=$1; yes=0
+        for a in "$@"; do
+            [ "$a" = --yes ] && yes=1
+        done
+        [ $yes = 1 ] || die "reset needs --yes when stdin is not a terminal" 2
+        lock
+        scenario_fail "$name" 0
+        mstart "$name"
+        say "Discarding local changes in $name ..."
+        say "Building $name ..."
+        say "$name: updated 2026-10-01 abc1234 -> 2026-10-01 abc1234"
+        mprog "$name" 1 1
+        ;;
+    hold|unhold)
+        [ $# -ge 1 ] || usage "$cmd NAME"
+        lock
+        [ "$scenario" = failed ] && die "$1: FAILED (not installed)"
+        if [ "$cmd" = hold ]; then say "$1: auto-update off"; else say "$1: auto-update on"; fi
+        ;;
+    open)
+        [ $# -ge 1 ] || usage "open NAME"
+        say "Opening $1"
+        ;;
+    shortcut)
+        [ $# -ge 1 ] || usage "shortcut NAME [--remove]"
+        name=$1; remove=0
+        [ "${2:-}" = --remove ] && remove=1
+        lock
+        [ "$scenario" = failed ] && die "$name: FAILED (no $name.desktop shipped)"
+        if [ $remove = 1 ]; then
+            say "$name: shortcut removed"
+        else
+            say "$name: shortcut created ($HOME/.local/share/applications/$name.desktop)"
+        fi
+        ;;
+    shortcuts)
+        if [ $# -eq 0 ]; then
+            printf '%s\n' "$HOME/.local/share/applications"
+        else
+            lock
+            [ "$scenario" = failed ] && die "shortcuts: cannot move to $1"
+            say "Moving shortcuts to $1"
+            say "Stored shortcuts=$1"
+        fi
+        ;;
+    dir)
+        if [ $# -eq 0 ]; then
+            printf '%s\n' "${FAKE_RITZ_GET_DIR:-$HOME/.local/share/ritz-get}"
+        else
+            lock
+            [ "$scenario" = failed ] && die "dir: cannot move to $1"
+            say "Moving ${FAKE_RITZ_GET_DIR:-$HOME/.local/share/ritz-get} to $1"
+            say "Repairing programs ..."
+            say "Regenerated shortcuts"
+        fi
+        ;;
+    *)
+        usage "COMMAND"
+        ;;
+esac
+exit 0

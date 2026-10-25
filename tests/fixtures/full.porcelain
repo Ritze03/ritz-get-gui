@@ -1,0 +1,25 @@
+#porcelain 1
+#online 1
+E	Software	yt-dlp-gui	yt-dlp GUI	program	Ritze03/yt-dlp-gui	installed	behind	1	main	2026-10-14 3f9e21a	2026-10-21 c84d0b7	3	0	0	Lean Go + Gio desktop GUI for yt-dlp	on
+E	Software	ritz	Ritz	program	Ritze03/ritz	available	-	0	-	-	9e24960	-	-	-	Linux Steam launch wrapper	-
+E	Software	ForzaTelemetryV3Launcher	Forza Telemetry V3 Launcher	program	Ritze03/ForzaTelemetryV3Launcher	available	-	0	master	-	433d3ad	-	-	-	Launcher for Forza Telemetry V3: keeps it up to date, builds and runs it	-
+E	Software	simple-screensharing	Simple Screensharing	program	Ritze03/simple-screensharing	available	-	0	-	-	f6431b8	-	-	-	Friends screensharing: native desktop client (E2E-encrypted, low latency)	-
+S	simple-screensharing	Needs PipeWire (incl. pw-loopback) and GStreamer plugins pipewire/good/bad/libav at runtime
+S	simple-screensharing	Needs a relay: self-host from this repo, or use a friend's; the app takes a join link
+E	Software	geofinder	Geofinder	program	Ritze03/geofinder	installed	modified	0	main	2026-10-01 2d81f06	2026-10-08 9c44d1a	3	3	0	Geobingo-style multiplayer party game with real Google and Apple Maps	on
+E	Software	SteamAlt	Steam Userdata Mover	program	Ritze03/SteamAlt	installed	current	0	main	2026-10-17 8a3f1c9	2026-10-17 8a3f1c9	0	0	0	Copy Steam game saves and settings between accounts on one PC	on
+E	Software	gamescope-ritz	Gamescope Ritz	program	Ritze03/gamescope-ritz	installed	current	0	main	2026-10-09 0b7c5e2	2026-10-09 0b7c5e2	0	0	0	SteamOS session compositing window manager, with added features	-
+S	gamescope-ritz	Ritz users: copy its Ritz module by hand, see https://github.com/Ritze03/gamescope-ritz#quick-start
+E	Helpers	ritz-get	ritz-get	program	Ritze03/ritz-get	installed	current	0	main	2026-10-22 a596443	2026-10-22 a596443	0	0	0	Install, update and remove Ritze03's programs, built from source	-
+E	Helpers	ritz-get-gui	ritz-get GUI	program	Ritze03/ritz-get-gui	installed	behind	0	main	2026-10-19 5e7a2c1	2026-10-22 d40f9b8	3	0	0	This window: browse, install and update Ritze03's programs	on
+E	Helpers	ccorral	ccorral	program	Ritze03/ccorral	installed	current	0	main	2026-10-18 7d1e0f2	2026-10-18 7d1e0f2	0	0	0	Keeps Claude Code sessions on a few CPU cores so the desktop stays fast	off
+E	Helpers	ts6tray	TeamSpeak 6 Tray	program	Ritze03/ts6tray	installed	behind	0	main	2026-10-20 a596443	2026-10-22 b12c3d4	3	0	0	Tray icon, mute control and notifications for TeamSpeak 6	-
+S	ts6tray	In TeamSpeak: Settings → Remote Apps → enable, port 5899
+S	ts6tray	First start asks TeamSpeak for approval. Details: https://github.com/Ritze03/ts6tray#quick-start
+E	Websites	cs2-alias-cycling	CS2 Alias Cycling	website	https://ritze03.github.io/stupid-pages/cs2-alias-cycling-generator.html	website	-	0	-	-	-	-	-	-	CS2 alias cycling config generator	off
+E	Websites	cs2-chat-keybind	CS2 Chat Keybind	website	https://ritze03.github.io/stupid-pages/cs2-chat-keybind-generator.html	website	-	0	-	-	-	-	-	-	CS2 chat keybind config generator	off
+E	Websites	cs2-multimap	CS2 Multimap	website	https://ritze03.github.io/stupid-pages/cs2-multimap-generator.html	website	-	0	-	-	-	-	-	-	CS2 multimap config generator	off
+E	Websites	simple-screensharing-web	Simple Screensharing (Web)	website	https://ritze03.github.io/simple-screensharing/	website	-	0	-	-	-	-	-	-	Watch or share a screen in the browser, no install	off
+E	Websites	walters-knaggertreff	Walters Knaggertreff	website	https://ritze03.github.io/walters-knaggertreff/	website	-	0	-	-	-	-	-	-	Party board game full of German memes, 2-6 players in the browser	on
+E	Other	ts6-themes	TeamSpeak 6 Themes	website	https://ritze03.github.io/Teamspeak6Themes/	website	-	0	-	-	-	-	-	-	Custom themes for the TeamSpeak 6 client	off
+E	Unlisted	old-experiment	old-experiment	program	-	unlisted	current	0	main	2026-09-02 77aa001	2026-09-02 77aa001	0	0	0		-
