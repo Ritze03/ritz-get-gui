@@ -112,7 +112,7 @@ pub fn parse(text: &str) -> Result<Listing, PorcelainError> {
                 }
                 entry.setup.push(SetupStep { text: f[2].to_owned() });
             }
-            other => return Err(bad(n, format!("unknown record type {other:?}"))),
+            _ => {} // unknown record type: ignored, so newer ritz-get records (e.g. D) don't break older GUIs
         }
     }
 
@@ -255,6 +255,15 @@ mod tests {
     }
 
     #[test]
+    fn unknown_record_types_are_ignored() {
+        let t = doc(&format!("{}\nD\tfoo\t~/.config/foo\t128\nS\tfoo\tstep one\nZ\tfoo\nS\tfoo\tstep two", e_line(&[])));
+        let l = parse(&t).unwrap();
+        assert_eq!(l.entries().count(), 1);
+        let foo = find(&l, "foo");
+        assert_eq!(foo.setup.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(), ["step one", "step two"]);
+    }
+
+    #[test]
     fn stray_or_mismatched_s_is_bad_line() {
         let t = "#porcelain 1\n#online 1\nS\tfoo\tstep\n";
         assert!(matches!(parse(t), Err(PorcelainError::BadLine { line: 3, .. })));
@@ -327,7 +336,7 @@ mod tests {
         }
         assert!(matches!(parse("#porcelain 1\n#online maybe\n"), Err(PorcelainError::BadLine { line: 2, .. })));
         assert!(matches!(parse("#porcelain 1\n#hidden many\n"), Err(PorcelainError::BadLine { line: 2, .. })));
-        assert!(matches!(parse("#porcelain 1\nX\tfoo\n"), Err(PorcelainError::BadLine { line: 2, .. })));
+        assert_eq!(parse("#porcelain 1\nX\tfoo\n").unwrap().entries().count(), 0); // unknown record type: ignored
         assert!(matches!(parse("#porcelain x\n"), Err(PorcelainError::BadLine { line: 1, .. })));
     }
 
