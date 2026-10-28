@@ -24,6 +24,7 @@ fn base(section: &str, name: &str, title: &str, desc: &str) -> Entry {
         latest: None,
         behind: None,
         dirty: None,
+        pending_branch: None,
         ahead: None,
         desc: desc.into(),
         shortcut: ShortcutState::None,

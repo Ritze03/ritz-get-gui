@@ -393,7 +393,7 @@ fn version_job(painter: &egui::Painter, e: &Entry, width: f32) -> LayoutJob {
     } else if e.is_installed() {
         if let Some(inst) = &e.installed {
             put(&nb(inst), theme::TEXT);
-            match (&e.latest, e.has_update()) {
+            match (&e.latest, e.behind_upstream()) {
                 (Some(latest), true) => {
                     put(" installed ", theme::TEXT_DIM);
                     put("\u{2192}", theme::WARN);
@@ -404,6 +404,10 @@ fn version_job(painter: &egui::Painter, e: &Entry, width: f32) -> LayoutJob {
                 _ => {
                     if let Some(b) = &e.branch {
                         put(&format!(" \u{b7} branch {b}"), theme::TEXT_DIM);
+                    }
+                    if let Some(p) = &e.pending_branch {
+                        put(" \u{2192}", theme::WARN);
+                        put(&format!(" {p}"), theme::TEXT);
                     }
                 }
             }
@@ -564,7 +568,7 @@ fn primary(state: &AppState, e: &Entry) -> Primary {
                 hint: Some("Local changes: updates are skipped until you reset"),
             }
         } else if e.has_update() {
-            Primary { label: "Update", look: Look::Primary, action: Some(Action::Update { name: Some(name) }), hint: None }
+            Primary { label: "Update", look: Look::Primary, action: Some(e.update_action()), hint: None }
         } else if e.status == Status::Current {
             Primary { label: "Up to date", look: Look::Disabled, action: None, hint: None }
         } else {
@@ -573,7 +577,7 @@ fn primary(state: &AppState, e: &Entry) -> Primary {
     } else if e.state == State::Offline {
         Primary { label: "Install", look: Look::Disabled, action: None, hint: Some("You're offline") }
     } else {
-        Primary { label: "Install", look: Look::Primary, action: Some(Action::Install { name, branch: None }), hint: None }
+        Primary { label: "Install", look: Look::Primary, action: Some(e.install_action()), hint: None }
     };
     if !state.actions_enabled() && p.look != Look::Disabled {
         p.look = Look::Disabled;
@@ -684,7 +688,7 @@ fn branch_item(ui: &mut egui::Ui, state: &AppState, e: &Entry, actions: &mut Vec
     let glyph = if open { theme::glyph::CHEVRON } else { theme::glyph::CHEVRON_R };
     theme::paint_glyph(p, Pos2::new(rect.left() + 14.0, rect.center().y), glyph, 10.0, theme::TEXT_DIM);
     p.text(Pos2::new(rect.left() + 30.0, rect.center().y), egui::Align2::LEFT_CENTER, "Branch", theme::regular(13.0), theme::TEXT);
-    if let Some(b) = &e.branch {
+    if let Some(b) = e.pending_branch.as_ref().or(e.branch.as_ref()) {
         p.text(Pos2::new(rect.right() - 6.0, rect.center().y), egui::Align2::RIGHT_CENTER, b, theme::mono(11.0), theme::TEXT_FAINT);
     }
     if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
@@ -696,7 +700,9 @@ fn branch_item(ui: &mut egui::Ui, state: &AppState, e: &Entry, actions: &mut Vec
     if !open {
         return;
     }
-    let cur = e.branch.clone().unwrap_or_default();
+    // The picked-but-not-applied branch is the selected one; the checked-out one is tagged below.
+    let installed_branch = e.branch.clone().unwrap_or_default();
+    let cur = e.pending_branch.clone().unwrap_or_else(|| installed_branch.clone());
     let list_item = |ui: &mut egui::Ui, label: String, enabled: bool| -> bool {
         let sense = if enabled { Sense::click() } else { Sense::hover() };
         let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), sense);
@@ -714,13 +720,12 @@ fn branch_item(ui: &mut egui::Ui, state: &AppState, e: &Entry, actions: &mut Vec
         }
         Some(list) => {
             for (b, _) in list {
-                let label = format!("{} {b}", if *b == cur { "\u{25cf}" } else { "\u{25cb}" });
+                let mut label = format!("{} {b}", if *b == cur { "\u{25cf}" } else { "\u{25cb}" });
+                if e.pending_branch.is_some() && *b == installed_branch {
+                    label.push_str("  (installed)");
+                }
                 if list_item(ui, label, state.actions_enabled()) && *b != cur {
-                    actions.push(if e.is_installed() {
-                        Action::Switch { name: e.name.clone(), branch: b.clone() }
-                    } else {
-                        Action::Install { name: e.name.clone(), branch: Some(b.clone()) }
-                    });
+                    actions.push(Action::PickBranch { name: e.name.clone(), branch: b.clone() });
                     ui.close();
                 }
             }

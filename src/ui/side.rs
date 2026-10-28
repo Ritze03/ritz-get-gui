@@ -286,7 +286,8 @@ fn program_card(ui: &mut egui::Ui, state: &AppState, e: &Entry, actions: &mut Ve
 /// D2: the branch ComboBox. Options come from `state.branches[name]`; when they are not known yet
 /// we show the current branch and ask for them once, when the box opens.
 fn branch_combo(ui: &mut egui::Ui, state: &AppState, e: &Entry, actions: &mut Vec<Action>) {
-    let cur = e.branch.clone().unwrap_or_default();
+    // The picked-but-not-applied branch shows as selected; "* b" still marks the checked-out one.
+    let cur = e.pending_branch.clone().or_else(|| e.branch.clone()).unwrap_or_default();
     let known = state.branches.get(&e.name);
     let asked = egui::Id::new(("side_branches_asked", &e.name));
     {
@@ -317,11 +318,7 @@ fn branch_combo(ui: &mut egui::Ui, state: &AppState, e: &Entry, actions: &mut Ve
                         let label = if *is_current { format!("* {b}") } else { b.clone() };
                         let picked = ui.selectable_label(*b == cur, RichText::new(label).size(12.0)).clicked();
                         if picked && *b != cur {
-                            actions.push(if e.is_installed() {
-                                Action::Switch { name: e.name.clone(), branch: b.clone() }
-                            } else {
-                                Action::Install { name: e.name.clone(), branch: Some(b.clone()) }
-                            });
+                            actions.push(Action::PickBranch { name: e.name.clone(), branch: b.clone() });
                         }
                     }
                 }
@@ -606,11 +603,11 @@ fn groups(state: &AppState, e: &Entry) -> Vec<Vec<Item>> {
         } else {
             vec![danger(cmd_item(state, glyph::TRASH, "Delete data\u{2026}", Action::ShowModal(Modal::DeleteData { id: e.id() })))]
         };
-        vec![vec![cmd_item(state, glyph::DOWNLOAD, "Install", Action::Install { name: name(), branch: None })], local, gh, data]
+        vec![vec![cmd_item(state, glyph::DOWNLOAD, "Install", e.install_action())], local, gh, data]
     } else {
         let mut life = Vec::new();
         if e.has_update() {
-            let mut u = cmd_item(state, glyph::REFRESH, "Update", Action::Update { name: Some(name()) });
+            let mut u = cmd_item(state, glyph::REFRESH, "Update", e.update_action());
             u.enabled &= !e.is_modified(); // update refuses a modified clone
             life.push(u);
         } else if e.status == Status::Current {

@@ -1344,3 +1344,122 @@ fn delete_data_twice_says_no_data_left() {
     assert!(calls.iter().all(|c| c.exit == 0));
     assert_call_invariants(&calls);
 }
+
+// ---- branch picks are remembered, not applied ----------------------------------------------
+
+fn pick(name: &str, branch: &str) -> Action {
+    Action::PickBranch { name: name.into(), branch: branch.into() }
+}
+
+/// The calls after the startup ones, `list` refreshes left out.
+fn mutations(r: &Rig) -> Vec<String> {
+    r.calls().into_iter().skip(STARTUP.len()).map(|c| c.argv).filter(|a| !a.starts_with("list")).collect()
+}
+
+/// Picking a branch of a not-installed program runs nothing; Install then installs that branch,
+/// and the pick is gone afterwards.
+#[test]
+fn pick_on_a_not_installed_program_runs_nothing_and_install_uses_it() {
+    let mut r = Rig::new("ok", "full.porcelain");
+    r.start();
+    let before = r.calls().len();
+    r.click(pick("ForzaTelemetryV3Launcher", "dev"));
+    assert_eq!(r.calls().len(), before, "a pick makes no call");
+    let e = r.find("ForzaTelemetryV3Launcher");
+    assert_eq!(e.pending_branch.as_deref(), Some("dev"));
+    assert!(!e.has_update(), "not installed: no update pill");
+    assert_eq!(e.install_action(), Action::Install { name: e.name.clone(), branch: Some("dev".into()) });
+    // The side panel's Install button carries it.
+    let offered = side::offered_actions(&r.app.state, &e);
+    assert!(offered.contains(&e.install_action()), "{offered:?}");
+
+    r.click(e.install_action());
+    assert_eq!(mutations(&r), ["install ForzaTelemetryV3Launcher --branch dev"]);
+    assert!(r.app.state.pending.is_empty(), "applied: forgotten");
+    assert_eq!(r.find("ForzaTelemetryV3Launcher").pending_branch, None);
+}
+
+/// A failed install keeps the pick for a retry.
+#[test]
+fn failed_install_keeps_the_pick() {
+    let mut r = Rig::new("failed", "full.porcelain");
+    r.start();
+    r.click(pick("ForzaTelemetryV3Launcher", "dev"));
+    r.click(r.find("ForzaTelemetryV3Launcher").install_action());
+    assert_eq!(r.app.state.pending.get("ForzaTelemetryV3Launcher").map(String::as_str), Some("dev"));
+}
+
+/// Picking a branch of an installed program runs nothing, the entry then counts as an update (pill,
+/// filter, Update all count), and Update runs `switch NAME BRANCH`; picking the installed branch
+/// again forgets the pick.
+#[test]
+fn pick_on_an_installed_program_is_an_update_that_switches() {
+    let mut r = Rig::new("ok", "full.porcelain");
+    r.start();
+    let (updates, all) = (r.app.state.counts().updates, r.app.state.update_all_count());
+    let before = r.calls().len();
+    assert!(!r.find("ccorral").has_update());
+
+    r.click(pick("ccorral", "dev"));
+    assert_eq!(r.calls().len(), before, "a pick makes no call");
+    let e = r.find("ccorral");
+    assert!(e.has_update() && e.updatable());
+    assert_eq!(r.app.state.counts().updates, updates + 1);
+    assert_eq!(r.app.state.update_all_count(), all + 1);
+    let pills: Vec<String> = crate::ui::pills::pills(&r.app.state, &e).into_iter().map(|p| p.text).collect();
+    assert_eq!(pills[0], "Update available");
+    assert_eq!(e.update_action(), Action::Switch { name: "ccorral".into(), branch: "dev".into() });
+    assert!(side::offered_actions(&r.app.state, &e).contains(&e.update_action()));
+
+    // Back to the installed branch: no longer an update.
+    r.click(pick("ccorral", "main"));
+    assert!(!r.find("ccorral").has_update());
+    assert!(r.app.state.pending.is_empty());
+    assert_eq!(r.calls().len(), before);
+
+    r.click(pick("ccorral", "dev"));
+    r.click(r.find("ccorral").update_action());
+    assert_eq!(mutations(&r), ["switch ccorral dev"]);
+    assert!(r.app.state.pending.is_empty(), "applied: forgotten");
+    assert!(!r.find("ccorral").has_update());
+}
+
+/// A failed switch keeps the pick (and so the update) for a retry.
+#[test]
+fn failed_switch_keeps_the_pick() {
+    let mut r = Rig::new("failed", "full.porcelain");
+    r.start();
+    r.click(pick("ccorral", "dev"));
+    r.click(r.find("ccorral").update_action());
+    assert!(r.find("ccorral").has_update());
+    assert_eq!(r.app.state.pending.get("ccorral").map(String::as_str), Some("dev"));
+}
+
+/// Update all: a `switch` per picked branch first, then the normal `update --yes` for the rest.
+#[test]
+fn update_all_switches_the_picked_branches_then_updates_the_rest() {
+    let mut r = Rig::new("ok", "full.porcelain");
+    r.start();
+    r.click(pick("ccorral", "dev"));
+    r.click(pick("ts6tray", "legacy")); // behind AND picked: the switch covers it
+    assert_eq!(r.app.state.update_all_count(), 3, "ritz-get-gui, ts6tray, ccorral");
+    r.click(Action::Update { name: None });
+    assert_eq!(mutations(&r), ["switch ccorral dev", "switch ts6tray legacy", "update --yes"]);
+    assert!(r.app.state.pending.is_empty());
+    assert_call_invariants(&r.calls());
+}
+
+/// Only picks: Update all runs the switches and no plain `update`.
+#[test]
+fn update_all_with_only_picks_runs_no_plain_update() {
+    let mut r = Rig::new("ok", "full.porcelain");
+    r.start();
+    let fixture = std::fs::read_to_string(&r.listing).unwrap();
+    // Nothing behind: every "behind" becomes "current" in the served listing.
+    std::fs::write(&r.listing, fixture.replace("\tbehind\t", "\tcurrent\t").replace("\t3\t", "\t0\t")).unwrap();
+    r.click(Action::CheckForUpdates);
+    r.click(pick("ccorral", "dev"));
+    assert_eq!(r.app.state.update_all_count(), 1);
+    r.click(Action::Update { name: None });
+    assert_eq!(mutations(&r), ["switch ccorral dev"]);
+}
