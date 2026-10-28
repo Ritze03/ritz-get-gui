@@ -27,6 +27,13 @@ check_tools() {
 
 # Build into target/ (git-ignored), copy to a temporary name in build/, mv over the final name.
 build() {
+	# rustup with no default toolchain (fresh rustup): build with stable, never touch the user's default
+	if command -v rustup >/dev/null 2>&1 && ! cargo --version >/dev/null 2>&1; then
+		d=$(rustup default 2>/dev/null) || d=
+		rustup toolchain install stable --profile minimal --no-self-update
+		[ -n "$d" ] || rustup default none || :     # rustup makes the first toolchain the default; undo that
+		export RUSTUP_TOOLCHAIN=stable
+	fi
 	cargo build --release --locked --color never
 	cp "target/release/$NAME" "build/.$NAME.new"
 	mv -f "build/.$NAME.new" "build/$NAME"
