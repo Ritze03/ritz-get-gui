@@ -177,6 +177,7 @@ fn parse_entry(f: &[&str]) -> Result<Entry, String> {
         latest: Version::parse(f[11]),
         behind: count("behind", f[12])?,
         dirty: count("dirty", f[13])?,
+        pending_branch: None,
         ahead: count("ahead", f[14])?,
         desc: f[15].to_owned(),
         shortcut: f.get(16).map_or(ShortcutState::None, |s| ShortcutState::parse(s)),

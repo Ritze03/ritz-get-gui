@@ -426,6 +426,7 @@ mod tests {
             latest: Some(Version { date: None, sha: "abc1234".into() }),
             behind: None,
             dirty: None,
+            pending_branch: None,
             ahead: None,
             desc: String::new(),
             shortcut: ShortcutState::None,

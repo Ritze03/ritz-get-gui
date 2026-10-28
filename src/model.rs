@@ -217,6 +217,10 @@ pub struct Entry {
     pub setup: Vec<SetupStep>,
     /// `D` records, in order: declared data folders that exist (only with `list --data`). Empty otherwise.
     pub data: Vec<DataPath>,
+    /// GUI only (never in PORCELAIN): the branch the user picked but has not applied yet. Mirrors
+    /// `AppState::pending` (see `AppState::sync_pending`); an installed entry with one counts as
+    /// having an update, and its Update runs `switch`; a not-installed one is installed on it.
+    pub pending_branch: Option<String>,
 }
 
 impl Entry {
@@ -264,9 +268,29 @@ impl Entry {
 
     /// Upstream has newer commits: `status == behind`, or `behind > 0` (a `modified` program keeps
     /// its `behind` count even though `modified` wins the status column, so the mockup's
-    /// "update available + modified" card still counts). See also [`Entry::updatable`].
-    pub fn has_update(&self) -> bool {
+    /// "modified + update" cards work).
+    pub fn behind_upstream(&self) -> bool {
         self.is_installed() && (self.status == Status::Behind || self.behind.unwrap_or(0) > 0)
+    }
+
+    /// An update is on offer: upstream is ahead, or the user picked another branch (applied by Update).
+    /// ponytail: a picked branch always counts; comparing the branch's head commit with the installed
+    /// one could skip identical branches, but needs a CLI query per pick.
+    pub fn has_update(&self) -> bool {
+        self.is_installed() && (self.behind_upstream() || self.pending_branch.is_some())
+    }
+
+    /// What Update does for this entry: `switch` to the picked branch, else a plain update.
+    pub fn update_action(&self) -> Action {
+        match &self.pending_branch {
+            Some(branch) => Action::Switch { name: self.name.clone(), branch: branch.clone() },
+            None => Action::Update { name: Some(self.name.clone()) },
+        }
+    }
+
+    /// What Install does: on the picked branch, if any.
+    pub fn install_action(&self) -> Action {
+        Action::Install { name: self.name.clone(), branch: self.pending_branch.clone() }
     }
 
     pub fn is_modified(&self) -> bool {
@@ -699,6 +723,9 @@ pub enum Action {
     Remove { name: String },
     /// Installed program, change branch.
     Switch { name: String, branch: String },
+    /// Branch picker: remember `branch` for `name` (nothing runs; Install / Update apply it).
+    /// Picking the entry's current branch forgets the pick.
+    PickBranch { name: String, branch: String },
     /// Run the reset (after the Reset modal's "Discard and reset").
     Reset { name: String },
     /// `ritz-get delete-data NAME --yes` (after the DeleteData modal's confirm button).

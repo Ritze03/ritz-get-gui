@@ -335,6 +335,11 @@ pub struct AppState {
     pub shortcuts_dir: Option<PathBuf>,
     /// Branch lists from `branches NAME`, keyed by entry **name**: `(branch, is_current)`.
     pub branches: HashMap<String, Vec<(String, bool)>>,
+    /// Branches picked in a branch picker but not applied yet, keyed by entry **name**. Install
+    /// uses it for a not-installed program, Update (`switch`) for an installed one; mirrored into
+    /// `Entry::pending_branch` by [`AppState::sync_pending`].
+    /// ponytail: in memory only, a restart forgets pending picks.
+    pub pending: HashMap<String, String>,
     /// A `list` is in flight (status bar "checking...").
     pub loading: bool,
     /// When the last successful online `list` landed ("checked 3 min ago").
@@ -386,6 +391,7 @@ impl Default for AppState {
             dir: None,
             shortcuts_dir: None,
             branches: HashMap::new(),
+            pending: HashMap::new(),
             loading: false,
             checked_at: None,
             open_menu: None,
@@ -455,6 +461,16 @@ impl AppState {
         c
     }
 
+    /// Drop picks that came true (the entry is on that branch now), then mirror the rest into
+    /// `Entry::pending_branch`. Call after the listing or `pending` changed.
+    pub fn sync_pending(&mut self) {
+        let Self { listing, pending, .. } = self;
+        pending.retain(|n, b| !listing.entries().any(|e| e.name == *n && e.branch.as_ref() == Some(b)));
+        for e in listing.sections.iter_mut().flat_map(|s| s.entries.iter_mut()) {
+            e.pending_branch = pending.get(&e.name).cloned();
+        }
+    }
+
     /// N in "Update all (N)": behind, not held, not modified (D19).
     pub fn update_all_count(&self) -> usize {
         self.listing.entries().filter(|e| e.updatable()).count()
@@ -521,7 +537,9 @@ impl AppState {
                 self.progress.clear();
                 self.progress_order.clear();
                 self.marks = Marks::default();
-                let names: Vec<String> = self.listing.entries().filter(|e| e.updatable()).map(|e| e.name.clone()).collect();
+                // Pending branch switches run as their own `switch` commands first (`App::dispatch`).
+                let names: Vec<String> =
+                    self.listing.entries().filter(|e| e.updatable() && e.pending_branch.is_none()).map(|e| e.name.clone()).collect();
                 for n in names {
                     if !self.progress.contains_key(&n) {
                         self.progress.insert(n.clone(), CardProgress { phase: Progress::Queued, verb: Verb::Update, ended: None });
@@ -1133,6 +1151,15 @@ impl AppState {
     /// (commands, clipboard, xdg-open, restart).
     fn apply_ui_action(&mut self, a: Action) -> Option<Action> {
         match a {
+            Action::PickBranch { name, branch } => {
+                let cur = self.listing.entries().find(|e| e.name == name).and_then(|e| e.branch.clone());
+                if cur.as_ref() == Some(&branch) {
+                    self.pending.remove(&name);
+                } else {
+                    self.pending.insert(name, branch);
+                }
+                self.sync_pending();
+            }
             Action::Select(id) => {
                 let changed = self.selected.as_deref() != Some(id.as_str());
                 self.scroll_to_side |= changed;
@@ -1679,6 +1706,7 @@ impl App {
                 // An offline listing never replaces a fresher online one.
                 if !(offline && self.state.checked_at.is_some()) {
                     self.state.listing = listing;
+                    self.state.sync_pending();
                 }
                 if reached {
                     self.state.checked_at = Some(Instant::now());
@@ -1726,6 +1754,11 @@ impl App {
     /// An `install`/`update`/`remove`/... finished (D32, D48, D58, D61).
     fn mutation_finished(&mut self, command: &Command, exit: ExitKind, captured: &Captured) {
         self.state.finish_run(command, exit, captured);
+        // The picked branch is applied: forget it. A failure keeps it for a retry.
+        if let (Command::Install { name, .. } | Command::Switch { name, .. }, true) = (command, exit.is_ok()) {
+            self.state.pending.remove(name);
+            self.state.sync_pending();
+        }
         // D47: only a successful `install` of a program that was NOT installed before (`Repair` is the
         // same `install NAME` on an installed one) may lead to the start-menu question.
         self.offer_shortcut = match command {
@@ -1941,6 +1974,23 @@ impl App {
             }
             Action::Restart => self.restart_self(),
             Action::Retry => self.begin_startup(),
+            // Update all: a `switch` per pending branch, then the normal `update` for the rest.
+            Action::Update { name: None } if self.state.listing.entries().any(|e| e.updatable() && e.pending_branch.is_some()) => {
+                let switches: Vec<Command> = self
+                    .state
+                    .listing
+                    .entries()
+                    .filter(|e| e.updatable())
+                    .filter_map(|e| Some(Command::Switch { name: e.name.clone(), branch: e.pending_branch.clone()? }))
+                    .collect();
+                let rest = self.state.listing.entries().any(|e| e.updatable() && e.pending_branch.is_none());
+                for c in switches {
+                    self.run_user_command(c);
+                }
+                if rest {
+                    self.run_user_command(Command::Update { name: None });
+                }
+            }
             other => {
                 if let Some(cmd) = other.to_command() {
                     self.run_user_command(cmd);
