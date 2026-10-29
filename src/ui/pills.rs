@@ -5,6 +5,7 @@
 //! |---------------------------------------------|---------------------------------------|
 //! | website                                     | WEB (ACCENT)                          |
 //! | installed/unlisted, `status=fetch-failed`   | FETCH FAILED (DANGER)                 |
+//! | installed/unlisted, `status=branch-gone`    | BRANCH DELETED (WARN)                 |
 //! | installed/unlisted, has update              | UPDATE AVAILABLE (WARN)               |
 //! | installed/unlisted, `status=current`        | UP TO DATE (GOOD)                     |
 //! | installed, `status=unknown`/modified-only   | none (D24: the installed version only)|
@@ -45,6 +46,11 @@ impl Pill {
     }
 }
 
+/// Tooltip of the BRANCH DELETED pill, also the side panel notice.
+pub fn branch_gone_text(e: &Entry) -> String {
+    format!("{} no longer exists on the remote; pick another branch", e.branch.as_deref().unwrap_or("The installed branch"))
+}
+
 /// The pills of `e`, in display order (see the module table).
 pub fn pills(state: &AppState, e: &Entry) -> Vec<Pill> {
     let mut v = Vec::new();
@@ -69,6 +75,8 @@ pub fn pills(state: &AppState, e: &Entry) -> Vec<Pill> {
     } else if e.is_installed() {
         if e.status == Status::FetchFailed {
             v.push(Pill::kind(PillKind::FetchFailed).tip("Could not check for updates"));
+        } else if e.is_branch_gone() {
+            v.push(Pill::kind(PillKind::BranchGone).tip(branch_gone_text(e)));
         } else if e.has_update() {
             v.push(Pill::kind(PillKind::Update));
         } else if e.status == Status::Current {
@@ -165,6 +173,7 @@ mod tests {
             } else if e.is_installed() {
                 match (&e.status, e.has_update()) {
                     (&Status::FetchFailed, _) => assert_eq!(got[0], "Fetch failed", "{}", e.id()),
+                    (&Status::BranchGone, _) => assert_eq!(got[0], "Branch deleted", "{}", e.id()),
                     (_, true) => assert_eq!(got[0], "Update available", "{}", e.id()),
                     (&Status::Current, false) => assert_eq!(got[0], "Up to date", "{}", e.id()),
                     // D24: unknown / modified-only: no status pill at all
@@ -187,6 +196,19 @@ mod tests {
         let geo = labels(&s, "Software/geofinder");
         assert!(geo.contains(&"Modified".to_owned()));
         assert!(labels(&s, "Software/yt-dlp-gui").contains(&theme::glyph::PAUSE.to_owned()));
+    }
+
+    #[test]
+    fn branch_gone_pill_names_the_branch() {
+        let mut s = st();
+        let e = s.listing.sections.iter_mut().flat_map(|x| x.entries.iter_mut()).find(|e| e.status == Status::Current).unwrap();
+        e.status = Status::BranchGone;
+        e.branch = Some("feature-x".into());
+        let id = e.id();
+        let all = pills(&s, s.listing.find(&id).unwrap());
+        assert_eq!(all[0].text, "Branch deleted");
+        assert_eq!(all[0].color, theme::WARN);
+        assert_eq!(all[0].tip.as_deref(), Some("feature-x no longer exists on the remote; pick another branch"));
     }
 
     #[test]

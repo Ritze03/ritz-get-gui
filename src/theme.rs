@@ -286,6 +286,8 @@ pub enum PillKind {
     Offline,
     /// installed but the fetch failed: DANGER
     FetchFailed,
+    /// the installed branch was deleted on the remote: WARN
+    BranchGone,
     /// `SETUP NEEDED` (session badge, exit 4): WARN
     SetupNeeded,
 }
@@ -294,7 +296,7 @@ impl PillKind {
     pub fn color(self) -> Color32 {
         match self {
             PillKind::Ok => GOOD,
-            PillKind::Update | PillKind::Modified | PillKind::SetupNeeded => WARN,
+            PillKind::Update | PillKind::Modified | PillKind::BranchGone | PillKind::SetupNeeded => WARN,
             PillKind::Missing | PillKind::Held | PillKind::Offline => TEXT_DIM,
             PillKind::Needs | PillKind::FetchFailed => DANGER,
             PillKind::Web | PillKind::Setup => ACCENT,
@@ -314,6 +316,7 @@ impl PillKind {
             PillKind::Setup => "Setup",
             PillKind::Offline => "Offline",
             PillKind::FetchFailed => "Fetch failed",
+            PillKind::BranchGone => "Branch deleted",
             PillKind::SetupNeeded => "Setup needed",
         }
     }

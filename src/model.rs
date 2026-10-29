@@ -80,7 +80,7 @@ impl State {
 
 /// `E` field 8. Only meaningful for `installed`/`unlisted` entries, else `-` ([`Status::None`]).
 /// PORCELAIN vocabulary: `current`, `behind`, `modified` (wins over everything), `fetch-failed`,
-/// `unknown` (installed but offline). `held` is NOT a status: it is the separate [`Entry::held`] flag.
+/// `branch-gone` (the installed branch was deleted on the remote), `unknown` (installed but offline). `held` is NOT a status: it is the separate [`Entry::held`] flag.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Status {
     /// `-`
@@ -89,6 +89,7 @@ pub enum Status {
     Behind,
     Modified,
     FetchFailed,
+    BranchGone,
     Unknown,
     Other(String),
 }
@@ -101,6 +102,7 @@ impl Status {
             "behind" => Status::Behind,
             "modified" => Status::Modified,
             "fetch-failed" => Status::FetchFailed,
+            "branch-gone" => Status::BranchGone,
             "unknown" => Status::Unknown,
             other => Status::Other(other.to_owned()),
         }
@@ -295,6 +297,11 @@ impl Entry {
 
     pub fn is_modified(&self) -> bool {
         self.status == Status::Modified
+    }
+
+    /// The installed branch no longer exists on the remote (`modified` wins, so a dirty clone never gets here).
+    pub fn is_branch_gone(&self) -> bool {
+        self.status == Status::BranchGone
     }
 
     /// Counted by "Update all (N)" (D19): behind, not held, not modified.
