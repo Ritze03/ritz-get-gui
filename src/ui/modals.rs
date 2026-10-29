@@ -565,6 +565,55 @@ fn failed_note(verb: Verb, reason: &str, display: &str) -> String {
     }
 }
 
+/// GitHub rejects a new-issue URL much over 8 KB; the log is trimmed to stay under this.
+const ISSUE_URL_MAX: usize = 7000;
+
+/// Percent-encode everything but the unreserved characters (RFC 3986), byte by byte.
+fn pct(s: &str) -> String {
+    s.bytes().fold(String::new(), |mut out, b| {
+        if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+            out.push(b as char);
+        } else {
+            out += &format!("%{b:02X}");
+        }
+        out
+    })
+}
+
+/// `REPO/issues/new?title=&body=`: `head`, then the newest `log` lines in a code block, as many as
+/// fit under [`ISSUE_URL_MAX`] (oldest dropped first; a line is cut at 300 chars).
+fn issue_url(repo: &str, title: &str, head: &str, log: &[&str]) -> String {
+    let title: String = title.chars().take(120).collect();
+    let mut from = log.len().saturating_sub(80);
+    loop {
+        let tail: Vec<String> = log[from..].iter().map(|l| l.chars().take(300).collect()).collect();
+        let body = if tail.is_empty() { head.to_owned() } else { format!("{head}\nLog (last lines):\n```\n{}\n```\n", tail.join("\n")) };
+        let url = format!("{repo}/issues/new?title={}&body={}", pct(&title), pct(&body));
+        if url.len() <= ISSUE_URL_MAX || from >= log.len() {
+            return url;
+        }
+        from += 1;
+    }
+}
+
+/// The failed run's "Report on GitHub" page: the program's repo with what failed filled in.
+fn report_url(state: &AppState, run: &Run, entry: &Entry, reason: &str) -> Option<String> {
+    let repo = entry.repo_url()?;
+    let mut head = format!("**Program:** {}\n**Command:** `{}`\n**ritz-get-gui:** {}\n", entry.name, run.cmd, env!("CARGO_PKG_VERSION"));
+    if let Some(b) = &entry.branch {
+        head += &format!("**Branch:** {b}\n");
+    }
+    if let Some(v) = &entry.installed {
+        head += &format!("**Installed commit:** {}\n", v.sha);
+    }
+    if let Some(v) = &entry.latest {
+        head += &format!("**Latest commit:** {}\n", v.sha);
+    }
+    head += &format!("**Error:** `{reason}`\n");
+    let log: Vec<&str> = state.run_lines().iter().map(|l| l.text.as_str()).collect();
+    Some(issue_url(&repo, &format!("Couldn\u{2019}t {} {}: {reason}", run.verb.base(), entry.name), &head, &log))
+}
+
 fn run_one(ctx: &egui::Context, state: &AppState, run: &Run, actions: &mut Vec<Action>) -> bool {
     let name = run.name.as_deref().unwrap_or_default();
     let entry = state.listing.entries().find(|e| e.name == name);
@@ -664,6 +713,18 @@ fn run_one(ctx: &egui::Context, state: &AppState, run: &Run, actions: &mut Vec<A
             RunPhase::Failed { reason } => {
                 alert(ui, reason);
                 body(ui, &failed_note(verb, reason, &display));
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = theme::GAP;
+                    // programs with a repo only (websites have none)
+                    if let Some(e) = entry.filter(|e| e.repo_url().is_some()) {
+                        if mbtn(ui, false, "Report on GitHub").clicked() {
+                            actions.extend(report_url(state, run, e, reason).map(Action::OpenUrl));
+                        }
+                    }
+                    if mbtn(ui, false, "Open full log").clicked() {
+                        actions.push(Action::OpenRunLog);
+                    }
+                });
                 if state.run_log_open {
                     run_log(ui, state, log_h);
                 }
@@ -1523,6 +1584,39 @@ mod tests {
         let texts = drawn_texts(&s);
         assert!(texts.iter().any(|t| t == &format!("Couldn\u{2019}t delete {name}\u{2019}s data")), "{texts:?}");
         assert!(texts.iter().any(|t| t == &format!("Nothing was deleted. Remove {name} first, then delete its data.")), "{texts:?}");
+    }
+
+    /// The report link: percent-encoded, the repo from the entry, the log trimmed (oldest lines first) to
+    /// fit the URL limit; the failed dialog offers it (and the log file) for a real failure only.
+    #[test]
+    fn report_url_fits_and_buttons_follow_the_phase() {
+        assert_eq!(pct("a b&c=\n\u{e4}~-_."), "a%20b%26c%3D%0A%C3%A4~-_.");
+        let lines: Vec<String> = (0..500).map(|i| format!("line {i}: {}", "\"quoted\" \u{fc} ".repeat(20))).collect();
+        let log: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let url = issue_url("https://github.com/Ritze03/x", &"t".repeat(300), "**Error:** `boom`\n", &log);
+        assert!(url.starts_with("https://github.com/Ritze03/x/issues/new?title=ttt"), "{url}");
+        assert!(url.len() <= ISSUE_URL_MAX, "{} chars", url.len());
+        assert!(url.contains("line%20499"), "the newest line is kept");
+        assert!(!url.contains("line%200%3A"), "the oldest are dropped");
+        assert!(!url.contains(&"t".repeat(121)), "the title is cut");
+        assert!(url.contains("%2A%2AError%3A%2A%2A"), "head is in the body");
+
+        let mut s = sample_state();
+        test_render::finished_run(&mut s, "Software/ritz", Verb::Install, RunPhase::Failed { reason: "install.sh exit 1".into() }, "ritz: FAILED (install.sh exit 1)");
+        let run = s.run.clone().unwrap();
+        let u = report_url(&s, &run, s.listing.find("Software/ritz").unwrap(), "install.sh exit 1").unwrap();
+        assert!(u.starts_with("https://github.com/Ritze03/ritz/issues/new?title=Couldn%E2%80%99t%20install%20ritz%3A%20install.sh%20exit%201&body="), "{u}");
+        assert!(u.contains(&format!("ritz-get-gui%3A%2A%2A%20{}", env!("CARGO_PKG_VERSION"))), "{u}");
+        assert!(u.contains("ritz-get%20remove%20ritz"), "the command: {u}");
+        let site = s.listing.find("Websites/cs2-multimap").unwrap();
+        assert_eq!(report_url(&s, &run, site, "x"), None, "websites have no repo");
+
+        assert!(matches!(press(&s, Some("Report on GitHub")).as_slice(), [Action::OpenUrl(_)]));
+        assert_eq!(press(&s, Some("Open full log")), vec![Action::OpenRunLog]);
+        let mut stopped = sample_state();
+        test_render::finished_run(&mut stopped, "Software/ritz", Verb::Install, RunPhase::Stopped, "ritz: stopped");
+        let texts = drawn_texts(&stopped);
+        assert!(texts.iter().all(|t| t != "Report on GitHub" && t != "Open full log"), "{texts:?}");
     }
 
     /// A wrapped path continues one indent in; its first line (and a path that fits) does not move.

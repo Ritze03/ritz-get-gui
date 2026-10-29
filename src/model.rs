@@ -757,6 +757,8 @@ pub enum Action {
     CopyToClipboard(String),
     /// Copy the whole log to the clipboard.
     CopyLog,
+    /// Open the failed run's full log in the default viewer (`App::run_log_file`).
+    OpenRunLog,
     /// Re-exec `~/.local/bin/ritz-get-gui` (restart bar, D25).
     Restart,
     /// Re-run the startup `list` (the "ritz-get not found" banner's Retry).
