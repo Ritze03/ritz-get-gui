@@ -184,16 +184,32 @@ pub mod glyph {
     pub const WARNING: &str = "\u{F071}";
 }
 
+thread_local! {
+    /// Ink centre (relative to the galley's top-left) per (first char, font size, ppp). The fonts are
+    /// built once, so the first measurement of a glyph at a size stays right; ppp is in the key
+    /// because the mesh snaps to device pixels.
+    static INK_CENTER: std::cell::RefCell<std::collections::HashMap<(char, u32, u32), egui::Vec2>> = Default::default();
+}
+
+/// Where to paint `glyph` with `Align2::LEFT_TOP` so the centre of the pixels it actually draws (the
+/// galley's `mesh_bounds`, not its advance / line box) lands on `cell_center`. Measured once per
+/// (glyph, size, ppp); a glyph that draws nothing falls back to the layout-box centre.
+pub fn centered_pos(painter: &egui::Painter, cell_center: egui::Pos2, glyph: &str, font: &FontId) -> egui::Pos2 {
+    let Some(ch) = glyph.chars().next() else { return cell_center };
+    let key = (ch, font.size.to_bits(), painter.ctx().pixels_per_point().to_bits());
+    let ink = INK_CENTER.with(|c| {
+        *c.borrow_mut().entry(key).or_insert_with(|| {
+            let g = painter.layout_no_wrap(ch.to_string(), font.clone(), Color32::WHITE);
+            if g.mesh_bounds.is_positive() { g.mesh_bounds.center().to_vec2() } else { g.size() * 0.5 }
+        })
+    });
+    cell_center - ink
+}
+
 /// Paint `glyph` centred on its **ink** at `center` (Nerd glyphs sit off-centre in their advance box).
 pub fn paint_glyph(painter: &egui::Painter, center: egui::Pos2, glyph: &str, size: f32, color: Color32) {
-    let g = painter.layout_no_wrap(glyph.to_owned(), FontId::proportional(size), color);
-    let ink = g
-        .rows
-        .first()
-        .and_then(|r| r.glyphs.first())
-        .map(|gl| gl.pos.to_vec2() + gl.uv_rect.offset + gl.uv_rect.size * 0.5)
-        .unwrap_or_else(|| g.size() * 0.5);
-    painter.galley(center - ink, g, color);
+    let font = FontId::proportional(size);
+    painter.text(centered_pos(painter, center, glyph, &font), egui::Align2::LEFT_TOP, glyph, font, color);
 }
 
 /// The "sort" icon (two vertical arrows, canvas `arrow-up-down`) centred at `center`, `size` px square.
@@ -763,6 +779,34 @@ mod tests {
             egui::CentralPanel::default().show(ctx, |ui| r = Some(f(ui)));
         });
         (out, r.unwrap())
+    }
+
+    /// `centered_pos` puts the centre of what the glyph draws on the cell centre, even for glyphs
+    /// whose layout-box centre is elsewhere.
+    #[test]
+    fn centered_pos_puts_the_ink_centre_on_the_cell_centre() {
+        let ctx = ctx();
+        let cell = egui::pos2(50.0, 40.0);
+        let mut off_centre = 0;
+        let (_, checked) = frame(&ctx, |ui| {
+            let p = ui.painter();
+            let mut checked = 0;
+            for g in [glyph::GEAR, glyph::GITHUB, glyph::EXT, glyph::TRASH, glyph::FOLDER, glyph::BUG, glyph::CHEVRON, glyph::PAUSE, "\u{2197}"] {
+                let font = FontId::proportional(13.0);
+                let pos = centered_pos(p, cell, g, &font);
+                let galley = p.layout_no_wrap(g.to_owned(), font, Color32::WHITE);
+                assert!(galley.mesh_bounds.is_positive(), "{g:?} draws nothing");
+                let ink = pos + galley.mesh_bounds.center().to_vec2();
+                assert!((ink - cell).length() < 0.5, "{g:?}: ink centre {ink:?} vs cell {cell:?}");
+                if (galley.size() * 0.5 - galley.mesh_bounds.center().to_vec2()).length() > 0.5 {
+                    off_centre += 1;
+                }
+                checked += 1;
+            }
+            checked
+        });
+        assert_eq!(checked, 9);
+        assert!(off_centre > 0, "no tested glyph has a layout-box centre different from its ink centre");
     }
 
     /// Root cause of the "tall Change... button": not the U+2026 glyph (Geist has it; the line is

@@ -348,6 +348,27 @@ fn scaled_texture(ctx: &egui::Context, path: &Path, px: u32) -> Result<Option<eg
     Ok(None)
 }
 
+/// The app's own icon (repo `icon.png`, copied artwork), embedded for the top bar.
+const OWN_ICON: &[u8] = include_bytes!("../icon.png");
+
+/// The app's own icon resampled for `size` points at the current ppp: resampled once per device
+/// size for the process, uploaded once per context (kept in its memory).
+pub fn own_texture(ctx: &egui::Context, size: f32) -> Option<egui::TextureHandle> {
+    static RESAMPLED: OnceLock<Mutex<HashMap<u32, egui::ColorImage>>> = OnceLock::new();
+    let px = target_px(size, ctx.pixels_per_point());
+    let id = egui::Id::new("own_icon").with(px);
+    if let Some(t) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)) {
+        return Some(t);
+    }
+    let img = match RESAMPLED.get_or_init(Default::default).lock().unwrap().entry(px) {
+        std::collections::hash_map::Entry::Occupied(e) => e.get().clone(),
+        std::collections::hash_map::Entry::Vacant(e) => e.insert(downscale(OWN_ICON, px)?).clone(),
+    };
+    let t = ctx.load_texture(format!("own-icon@{px}"), img, egui::TextureOptions::LINEAR);
+    ctx.data_mut(|d| d.insert_temp(id, t.clone()));
+    Some(t)
+}
+
 /// Drop the resampled textures and the remembered bytes of `path` (its file was re-downloaded or
 /// its clone was reinstalled / updated); the next draw re-reads the file.
 pub fn forget_scaled(path: &Path) {

@@ -28,7 +28,7 @@ fn main() -> eframe::Result {
         egui::IconData { width: img.width(), height: img.height(), rgba: img.into_raw() }
     });
     let mut viewport = egui::ViewportBuilder::default()
-        .with_title("ritz-get-gui") // D42
+        .with_title("Ritz-Get-GUI") // D42
         .with_app_id("ritz-get-gui") // Wayland app_id / X11 class, matches the .desktop file
         .with_inner_size([1280.0, 800.0])
         .with_min_inner_size([520.0, 420.0]);

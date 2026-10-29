@@ -169,7 +169,7 @@ fn hero(ui: &mut egui::Ui, state: &AppState, e: &Entry, actions: &mut Vec<Action
         let p = ui.painter();
         p.rect(rect, CornerRadius::same(5), theme::BTN, Stroke::new(1.0_f32, border), StrokeKind::Inside);
         let color = if resp.hovered() { theme::TEXT } else { theme::TEXT_DIM };
-        p.text(rect.center(), egui::Align2::CENTER_CENTER, "\u{2197}", theme::regular(12.0), color);
+        theme::paint_glyph(p, rect.center(), "\u{2197}", 12.0, color);
         super::groups::focus_ring(ui, &resp, rect, 5);
         let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Open on GitHub");
         if resp.clicked() {
