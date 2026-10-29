@@ -35,6 +35,11 @@ fn main() -> eframe::Result {
     if let Some(icon) = icon {
         viewport = viewport.with_icon(icon);
     }
-    let options = eframe::NativeOptions { viewport, ..Default::default() };
+    // vsync off: with eglSwapInterval 1 on Wayland, eglSwapBuffers blocks until the compositor sends a
+    // wl_surface frame callback, and compositors (Hyprland, ...) stop sending those to a hidden surface
+    // (other workspace, covered by a maximised/fullscreen window). The winit loop then hangs in the swap,
+    // misses the xdg_wm_base ping and the compositor shows "not responding". We repaint only on demand
+    // (idle = none, animations capped at ~30 fps via request_repaint_after), so we lose nothing.
+    let options = eframe::NativeOptions { viewport, vsync: false, ..Default::default() };
     eframe::run_native("ritz-get-gui", options, Box::new(|cc| Ok(Box::new(app::App::new(cc)))))
 }
