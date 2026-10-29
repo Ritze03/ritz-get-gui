@@ -328,7 +328,7 @@ fn every_action_makes_the_right_call() {
     step(&mut r, remove, &["shortcut yt-dlp-gui --remove", REFRESH]);
     step(&mut r, Action::Open { name: "walters-knaggertreff".into() }, &["open walters-knaggertreff"]);
     step(&mut r, Action::Branches { name: "ts6tray".into() }, &["branches ts6tray"]);
-    step(&mut r, Action::CheckForUpdates, &[REFRESH]);
+    step(&mut r, Action::CheckForUpdates, &[REFRESH, "branches ts6tray"]); // re-asks the cached branch lists
     step(&mut r, Action::SetDir("/srv/ritz".into()), &["dir /srv/ritz --yes", "dir", REFRESH]);
     step(&mut r, Action::SetShortcutsDir("/srv/apps".into()), &["shortcuts /srv/apps", "shortcuts", REFRESH]);
 
