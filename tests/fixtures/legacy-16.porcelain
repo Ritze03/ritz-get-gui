@@ -16,7 +16,7 @@ D	SteamAlt	~/.config/SteamAlt	340
 E	Software	gamescope-ritz	Gamescope Ritz	program	Ritze03/gamescope-ritz	installed	current	0	main	2026-10-09 0b7c5e2	2026-10-09 0b7c5e2	0	0	0	SteamOS session compositing window manager, with added features
 S	gamescope-ritz	Ritz users: copy its Ritz module by hand, see https://github.com/Ritze03/gamescope-ritz#quick-start
 E	Helpers	ritz-get	ritz-get	program	Ritze03/ritz-get	installed	current	0	main	2026-10-22 a596443	2026-10-22 a596443	0	0	0	Install, update and remove Ritze03's programs, built from source
-E	Helpers	ritz-get-gui	ritz-get GUI	program	Ritze03/ritz-get-gui	installed	behind	0	main	2026-10-19 5e7a2c1	2026-10-22 d40f9b8	3	0	0	Graphical frontend for ritz-get
+E	Helpers	ritz-get-gui	Ritz-Get-GUI	program	Ritze03/ritz-get-gui	installed	behind	0	main	2026-10-19 5e7a2c1	2026-10-22 d40f9b8	3	0	0	Graphical frontend for ritz-get
 E	Helpers	ccorral	ccorral	program	Ritze03/ccorral	installed	current	0	main	2026-10-18 7d1e0f2	2026-10-18 7d1e0f2	0	0	0	Keeps Claude Code sessions on a few CPU cores so the desktop stays fast
 E	Helpers	ts6tray	TeamSpeak 6 Tray	program	Ritze03/ts6tray	installed	behind	0	main	2026-10-20 a596443	2026-10-22 b12c3d4	3	0	0	Tray icon, mute control and notifications for TeamSpeak 6
 S	ts6tray	In TeamSpeak: Settings → Remote Apps → enable, port 5899
