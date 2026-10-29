@@ -17,7 +17,7 @@
 //! * [`Modal::Run`] (design canvas boards 2a, 3, 4): the progress dialog of an install / update /
 //!   repair / switch / reset / remove (460 px) and of Update all (500 px), 20 px padding, 16 px gap,
 //!   28 px buttons, 56 px (48 px) app icon with a status badge. Its content is `state.run`:
-//!   - running: indeterminate sweep bar, the newest log line (mono), "Show log" expander,
+//!   - running: indeterminate sweep bar, the newest ritz-get step line (mono, one line, no build output), "Show log" expander,
 //!     `[Run in background]`. Esc / backdrop do the same; the cards keep their bars and the status bar
 //!     (Update all: the top bar button) offers the way back.
 //!   - done: ✓ + what changed + `[Done]`; after a fresh install whose refreshed listing says column 17
@@ -640,6 +640,9 @@ fn report_url(state: &AppState, run: &Run, entry: &Entry, reason: &str) -> Optio
     Some(issue_url(&repo, &format!("Couldn\u{2019}t {} {}: {reason}", run.verb.base(), entry.name), &head, &log))
 }
 
+/// Height of the running dialog's one-line status.
+const STATUS_H: f32 = 16.0;
+
 fn run_one(ctx: &egui::Context, state: &AppState, run: &Run, actions: &mut Vec<Action>) -> bool {
     let name = run.name.as_deref().unwrap_or_default();
     let entry = state.listing.entries().find(|e| e.name == name);
@@ -674,8 +677,12 @@ fn run_one(ctx: &egui::Context, state: &AppState, run: &Run, actions: &mut Vec<A
                 ui.scope(|ui| {
                     ui.spacing_mut().item_spacing.y = 12.0;
                     sweep_bar(ui, 6.0);
-                    let line = state.run_latest().map_or("Starting\u{2026}", |l| l.text.as_str());
-                    ui.add(egui::Label::new(RichText::new(line).font(theme::mono(12.0)).color(theme::TEXT)).wrap());
+                    // one fixed-height line, cut with an ellipsis, so the dialog never grows or shrinks
+                    let line = state.run_status().map_or("Starting\u{2026}", |l| l.text.as_str());
+                    let size = egui::vec2(ui.available_width(), STATUS_H);
+                    ui.allocate_ui_with_layout(size, Layout::left_to_right(Align::Center), |ui| {
+                        ui.add(egui::Label::new(RichText::new(line).font(theme::mono(12.0)).color(theme::TEXT)).truncate());
+                    });
                 });
                 if state.run_log_open {
                     run_log(ui, state, log_h);
@@ -898,7 +905,7 @@ fn row_view(state: &AppState, name: &str, cp: &CardProgress) -> (&'static str, C
     match &cp.phase {
         Progress::Queued => ("Queued", dim, "Waiting".into(), dim, RowBar::Empty),
         Progress::Running => {
-            let line = state.run_latest().map_or_else(|| "Starting\u{2026}".to_owned(), |l| l.text.clone());
+            let line = state.run_status().map_or_else(|| "Starting\u{2026}".to_owned(), |l| l.text.clone());
             ("Updating\u{2026}", theme::ACCENT, line, theme::TEXT, RowBar::Sweep)
         }
         Progress::Done => ("Done", theme::GOOD, "Finished".into(), dim, RowBar::Full(theme::GOOD)),
@@ -1390,6 +1397,32 @@ mod tests {
             "gcc".to_owned(),
         ];
         assert_eq!(tool_names(&m), ["cargo", "pkg-config", "gcc"]);
+    }
+
+    /// The running dialog's status is one line: build noise (long or many-lined) neither shows nor
+    /// changes the dialog's height, and a long step line is cut instead of wrapped.
+    #[test]
+    fn running_status_is_one_fixed_line() {
+        use egui::Rect;
+        let height = |lines: &[&str]| {
+            let mut s = AppState { listing: crate::sample::listing(), dir: Some("/home/u/ritz-get".into()), ..AppState::default() };
+            s.apply_shot_hook("install-running=Software/ritz");
+            for l in lines {
+                s.push_log(LogKind::Info, *l);
+            }
+            let ctx = test_render::context();
+            let (out, _) = test_render::run_ctx(&ctx, 600.0, 700.0, |ctx| {
+                let mut actions = Vec::new();
+                draw(ctx, &s, &mut actions);
+            });
+            test_render::visible_rects(&out).into_iter().fold(Rect::NOTHING, |a, r| a.union(r)).height()
+        };
+        let base = height(&[]);
+        let noise = "   Compiling a-really-long-crate-name v1.0.200 (/home/u/ritz-get/src/ritz/crates/a-really-long-crate-name)";
+        assert_eq!(height(&[noise]), base, "a noise line changes nothing");
+        assert_eq!(height(&[noise, "ritz: building", noise, noise]), base, "a step line followed by noise changes nothing");
+        let long = format!("ritz: FAILED ({})", "needs a-really-long-tool-name, ".repeat(12));
+        assert_eq!(height(&[&long]), base, "a long step line is cut, not wrapped");
     }
 
     /// Every modal state renders at the three test widths (and 1.5 / 2.0 scale) and stays on screen.
