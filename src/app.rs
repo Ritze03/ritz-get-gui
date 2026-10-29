@@ -2024,6 +2024,17 @@ impl App {
                     self.run_user_command(Command::Update { name: None });
                 }
             }
+            // The branch lists are fetched once per program, so a new remote branch never showed up:
+            // re-ask the ones already known (an open picker updates in place; pending picks live
+            // apart in `pending`, so they stay). Programs never opened stay lazy.
+            Action::CheckForUpdates => {
+                self.run_user_command(Command::List { offline: false, all: false, data: true });
+                let mut known: Vec<String> = self.state.branches.keys().cloned().collect();
+                known.sort();
+                for name in known {
+                    self.run_user_command(Command::Branches { name });
+                }
+            }
             other => {
                 if let Some(cmd) = other.to_command() {
                     self.run_user_command(cmd);
@@ -3192,6 +3203,21 @@ mod tests {
         let mut a = loaded();
         a.handle_event(fin(Command::Branches { name: "foo".into() }, ExitKind::Ok, out("* main\n  dev\n")));
         assert_eq!(a.state.branches["foo"], vec![("main".to_owned(), true), ("dev".to_owned(), false)]);
+    }
+
+    #[test]
+    fn check_for_updates_refreshes_known_branch_lists_and_keeps_pending_picks() {
+        let mut a = loaded();
+        a.handle_event(fin(Command::Branches { name: "foo".into() }, ExitKind::Ok, out("* main\n  dev\n")));
+        a.state.pending.insert("foo".into(), "dev".into());
+        a.dispatch(&egui::Context::default(), Action::CheckForUpdates);
+        // The list plus a fresh `branches` for the one program whose list was cached; others stay lazy.
+        assert_eq!(a.queue, [list(false), Command::Branches { name: "foo".into() }]);
+        assert_eq!(a.state.branches["foo"].len(), 2, "the old list stays until the new one lands");
+        a.queue.clear();
+        a.handle_event(fin(Command::Branches { name: "foo".into() }, ExitKind::Ok, out("* main\n  dev\n  newbranch\n")));
+        assert_eq!(a.state.branches["foo"].len(), 3);
+        assert_eq!(a.state.pending["foo"], "dev");
     }
 
     #[test]
