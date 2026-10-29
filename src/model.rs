@@ -532,6 +532,8 @@ pub enum ExitKind {
     Busy,
     /// The binary could not be spawned (not found / not executable). Drives the "ritz-get not found" banner.
     SpawnFailed,
+    /// The user pressed Stop (`Runner::stop`) and the command ended non-zero.
+    Stopped,
     /// Any other code (also killed by a signal -> `Other(-1)`).
     Other(i32),
 }
@@ -775,6 +777,8 @@ pub enum Action {
     ShowMain,
     /// Show / hide the log inside the Run dialog.
     ToggleRunLog,
+    /// Stop button of the progress dialog: kill the running command.
+    StopRun,
     ShowModal(Modal),
     CloseModal,
 }

@@ -26,7 +26,7 @@ use egui::text::{LayoutJob, TextFormat, TextWrapping};
 use egui::{Align, Color32, CornerRadius, FontId, Layout, Pos2, Rect, Sense, Stroke, StrokeKind, UiBuilder, vec2};
 
 use crate::app::{AppState, CardProgress, Tone};
-use crate::model::{Action, Entry, Kind, State, Status, Version};
+use crate::model::{Action, Entry, Kind, Modal, State, Status, Version};
 use crate::theme;
 
 /// `minmax(270pt, 1fr)` (was 248): 3 columns at 1280, 2 at 900 and at 600.
@@ -593,9 +593,15 @@ fn actions_row(ui: &mut egui::Ui, state: &AppState, e: &Entry, row: Rect, action
     let prim_rect = Rect::from_min_size(row.min, vec2((row.width() - more_w).max(0.0), BTN_H));
 
     if let Some(cp) = state.progress.get(&e.name) {
-        // A running / just finished install, update, ...: the button is its progress bar instead
-        // (not clickable; a click falls through to the card = select).
-        ui.scope_builder(UiBuilder::new().max_rect(prim_rect), |ui| progress_bar(ui, cp));
+        // A running / just finished install, update, ...: the button is its progress bar instead.
+        // Not clickable (a click falls through to the card = select), except while the run's dialog
+        // is hidden: then the bar is the way back into it.
+        let back = state.run_hidden();
+        let resp = ui.scope_builder(UiBuilder::new().max_rect(prim_rect), |ui| progress_bar(ui, cp, back)).inner;
+        if back && resp.clicked() {
+            actions.push(Action::Select(id.clone()));
+            actions.push(Action::ShowModal(Modal::Run));
+        }
     } else {
         let prim = primary(state, e);
         let resp = ui
@@ -859,8 +865,10 @@ pub(super) fn sweep_rect(track: Rect, time: f64) -> Rect {
 /// The card's primary button turned into a bar: same size ([`BTN_H`], the `Ui`'s width), radius 7,
 /// 1 pt border. Running = an ACCENT sweep over a FIELD track (no percentage exists), Queued = the
 /// still track, then the result in GOOD / GOOD-tinted (up to date) / WARN / DANGER, each with a glyph. The label sits inside, centred.
-fn progress_bar(ui: &mut egui::Ui, cp: &CardProgress) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(vec2(ui.max_rect().width(), BTN_H), Sense::hover());
+fn progress_bar(ui: &mut egui::Ui, cp: &CardProgress, clickable: bool) -> egui::Response {
+    let sense = if clickable { Sense::click() } else { Sense::hover() };
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.max_rect().width(), BTN_H), sense);
+    let resp = if clickable { resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Show progress") } else { resp };
     if !ui.is_rect_visible(rect) {
         return resp;
     }
