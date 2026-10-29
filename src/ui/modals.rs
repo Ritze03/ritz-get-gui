@@ -9,9 +9,11 @@
 //!   the focus, so Enter cancels. The text promises nothing beyond "the old version stays if the
 //!   rebuild fails".
 //! * [`Modal::DeleteData`]: 420 px, "Delete NAME\u{2019}s data?", the data folders (mono, with their sizes, in a
-//!   FIELD box that scrolls when there are many), "This can\u{2019}t be undone.", `[Cancel] [Delete]`; Cancel gets
-//!   the focus and Delete is the danger button, so nothing is ever deleted by one click or one Enter.
-//!   Delete is off while the program is still installed (ritz-get refuses then).
+//!   FIELD box that scrolls when there are many), a warning that all of it is lost for good, "Type REPO to
+//!   confirm" (REPO = the raw repository name from the source, mono) with a text field that has the focus,
+//!   `[Cancel] [Delete]`. Delete (danger) stays off until the field holds REPO exactly (Enter in the field
+//!   does the same), so nothing is ever deleted by one click or one Enter. Delete is off while the program
+//!   is still installed (ritz-get refuses then); there Cancel has the focus.
 //! * [`Modal::Run`] (design canvas boards 2a, 3, 4): the progress dialog of an install / update /
 //!   repair / switch / reset / remove (460 px) and of Update all (500 px), 20 px padding, 16 px gap,
 //!   28 px buttons, 56 px (48 px) app icon with a status badge. Its content is `state.run`:
@@ -72,6 +74,9 @@ pub fn draw(ctx: &egui::Context, state: &AppState, actions: &mut Vec<Action>) {
     if let Some(n) = state.refused {
         refused(ctx, state, n, actions);
         return;
+    }
+    if !matches!(state.modal, Some(Modal::DeleteData { .. })) {
+        ctx.data_mut(|d| d.remove_temp::<String>(Id::new("delete_data_typed")));
     }
     match &state.modal {
         Some(Modal::Reset { id }) => reset(ctx, state, id, actions),
@@ -147,6 +152,12 @@ fn delete_data(ctx: &egui::Context, state: &AppState, id: &str, actions: &mut Ve
     let installed = entry.is_some_and(Entry::is_installed);
     // Room for the list: the rest of the dialog is about 190 px.
     let list_h = room(ctx, 190.0, 60.0, 220.0);
+    // The raw repository name (after the last `/` of the source), not the display name; the folder name without a source.
+    let repo = entry.and_then(|e| e.source.as_deref()).and_then(|s| s.trim_end_matches('/').rsplit('/').next()).unwrap_or(&name).to_owned();
+    // Per-modal: dropped by [`draw`] as soon as another modal (or none) is showing.
+    let typed_id = Id::new("delete_data_typed");
+    let mut typed: String = ctx.data_mut(|d| d.get_temp(typed_id)).unwrap_or_default();
+    let armed = state.actions_enabled() && !installed && !data.is_empty();
 
     let close = show(ctx, "modal_delete_data", true, |ui| {
         title(ui, &format!("Delete {display}\u{2019}s data?"));
@@ -159,14 +170,27 @@ fn delete_data(ctx: &egui::Context, state: &AppState, id: &str, actions: &mut Ve
                 // Nothing can be deleted yet, so no warning about it.
                 body(ui, &format!("{display} is still installed and uses this data. Remove it first, then delete its data."));
             } else {
-                body(ui, "This can\u{2019}t be undone.");
+                body(ui, &format!("All of {display}\u{2019}s config and data listed above will be permanently lost. This can\u{2019}t be undone."));
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    ui.label(body_text("Type "));
+                    ui.label(RichText::new(&repo).font(theme::mono(12.0)).color(theme::TEXT));
+                    ui.label(body_text(" to confirm"));
+                });
+                let edit = ui.add(egui::TextEdit::singleline(&mut typed).font(theme::mono(12.0)).desired_width(f32::INFINITY));
+                focus_first_frames(ui.ctx(), &edit, "delete-data");
+                if edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && armed && typed.trim() == repo {
+                    actions.push(Action::CloseModal);
+                    actions.push(Action::DeleteData { name: name.clone() });
+                }
             }
         }
+        ctx.data_mut(|d| d.insert_temp(typed_id, typed.clone()));
         let mut close = false;
         buttons(ui, |ui| {
             // right-to-left: the last pushed is leftmost
             if !data.is_empty() {
-                let go = ui.add_enabled(state.actions_enabled() && !installed, theme::danger_button("Delete"));
+                let go = ui.add_enabled(armed && typed.trim() == repo, theme::danger_button("Delete"));
                 theme::hover_outline(ui, &go, theme::DANGER);
                 if go.clicked() {
                     // Close first: the delete opens the progress dialog, which the close must not take away.
@@ -175,7 +199,9 @@ fn delete_data(ctx: &egui::Context, state: &AppState, id: &str, actions: &mut Ve
                 }
             }
             let cancel = ui.add(theme::secondary_button(if data.is_empty() { "Close" } else { "Cancel" }));
-            focus_first_frames(ui.ctx(), &cancel, "delete-data");
+            if data.is_empty() || installed {
+                focus_first_frames(ui.ctx(), &cancel, "delete-data");
+            }
             if cancel.clicked() {
                 close = true;
             }
@@ -1424,6 +1450,11 @@ mod tests {
     /// Run `state`'s modal for a few frames, then click the button labelled `label` (or press Enter
     /// when `None`); the actions the dialog pushed on the frames after that.
     fn press(state: &AppState, label: Option<&str>) -> Vec<Action> {
+        press_typing(state, "", label)
+    }
+
+    /// [`press`] after typing `text` into the focused field.
+    fn press_typing(state: &AppState, text: &str, label: Option<&str>) -> Vec<Action> {
         let ctx = test_render::context();
         let (w, h) = (900.0, 700.0);
         let mut actions = Vec::new();
@@ -1459,6 +1490,7 @@ mod tests {
                 6 | 7 if pos.is_some() => {
                     events = vec![egui::Event::PointerButton { pos: pos.unwrap(), button: egui::PointerButton::Primary, pressed: frame == 6, modifiers: Default::default() }];
                 }
+                3 if !text.is_empty() => events = vec![egui::Event::Text(text.to_owned())],
                 _ => {}
             }
         }
@@ -1473,15 +1505,22 @@ mod tests {
         s.listing.sections.iter_mut().flat_map(|x| x.entries.iter_mut()).find(|e| e.name == "ritz").unwrap()
     }
 
-    /// Delete is one deliberate click: Cancel / Enter (Cancel has the focus) only close; only Delete
-    /// closes and starts the delete.
+    /// Delete needs the raw repository name typed (case-sensitive, not the display name): Cancel / Enter on
+    /// an empty or wrong field only close or do nothing; only the exact name arms Delete (and Enter).
     #[test]
-    fn delete_data_confirm_never_deletes_by_default() {
+    fn delete_data_confirm_needs_the_repo_name() {
         let mut s = sample_state();
         s.apply_shot_hook("deletedata=Software/ritz");
+        ritz_mut(&mut s).source = Some("Ritze03/ritz-repo".into());
+        let del = vec![Action::CloseModal, Action::DeleteData { name: "ritz".into() }];
         assert_eq!(press(&s, Some("Cancel")), vec![Action::CloseModal]);
-        assert_eq!(press(&s, None), vec![Action::CloseModal], "Enter lands on Cancel");
-        assert_eq!(press(&s, Some("Delete")), vec![Action::CloseModal, Action::DeleteData { name: "ritz".into() }]);
+        for wrong in ["", "ritz", "Ritz", "ritz-Repo", "Ritze03/ritz-repo", "ritz-repo-"] {
+            assert_eq!(press_typing(&s, wrong, Some("Delete")), Vec::<Action>::new(), "{wrong:?}");
+            assert_eq!(press_typing(&s, wrong, None), Vec::<Action>::new(), "Enter with {wrong:?}");
+        }
+        assert_eq!(press_typing(&s, "ritz-repo", Some("Delete")), del);
+        assert_eq!(press_typing(&s, " ritz-repo ", Some("Delete")), del, "surrounding spaces are fine");
+        assert_eq!(press_typing(&s, "ritz-repo", None), del, "Enter in the field");
     }
 
     /// Every text the modal draws (a few frames in, so the layout has settled).
@@ -1507,13 +1546,16 @@ mod tests {
         let undone = "This can\u{2019}t be undone.";
         let mut s = sample_state();
         s.apply_shot_hook("deletedata=Software/ritz");
-        assert!(drawn_texts(&s).iter().any(|t| t == undone), "the confirmable delete warns");
+        let texts = drawn_texts(&s);
+        assert!(texts.iter().any(|t| t.contains("permanently lost") && t.ends_with(undone)), "the confirmable delete warns: {texts:?}");
+        assert!(texts.iter().any(|t| t == "ritz"), "the repo name to type is shown: {texts:?}");
         let mut s = sample_state();
         s.apply_shot_hook("deletedata=Software/SteamAlt");
         let texts = drawn_texts(&s);
         assert!(texts.iter().any(|t| t.contains("Remove it first, then delete its data.")), "{texts:?}");
         assert!(!texts.iter().any(|t| t.contains("undone")), "no warning when Delete is off: {texts:?}");
-        assert_eq!(press(&s, Some("Delete")), Vec::<Action>::new());
+        assert_eq!(press_typing(&s, "SteamAlt", Some("Delete")), Vec::<Action>::new());
+        assert!(!texts.iter().any(|t| t.contains("to confirm")), "{texts:?}");
         let mut s = sample_state();
         s.apply_shot_hook("deletedata=Software/ritz");
         ritz_mut(&mut s).data.clear();
