@@ -156,6 +156,8 @@ pub struct Run {
     pub phase: RunPhase,
     /// Stop was pressed; the command has not ended yet.
     pub stopping: bool,
+    /// When the run began: ritz-get's build log is this run's only if it was written after.
+    pub started: std::time::SystemTime,
     /// The command ended well; waiting for the refreshed listing to decide the start-menu question.
     pub settling: bool,
     /// The refreshed listing asks for the start-menu question (D47).
@@ -696,6 +698,7 @@ impl AppState {
             order: self.progress_order.clone(),
             phase: RunPhase::Running,
             stopping: false,
+            started: std::time::SystemTime::now(),
             settling: false,
             ask_menu: false,
             change: None,
@@ -1985,6 +1988,11 @@ impl App {
         match action {
             Action::OpenUrl(target) | Action::OpenFolder(target) => self.open_detached(&target),
             Action::CopyToClipboard(text) => ctx.copy_text(text),
+            Action::OpenRunLog => {
+                if let Some(p) = self.run_log_file() {
+                    self.open_detached(&p.to_string_lossy());
+                }
+            }
             Action::CopyLog => {
                 let text: Vec<String> = self.state.log.iter().map(|l| format!("{} {}", l.time, l.text)).collect();
                 ctx.copy_text(text.join("\n"));
@@ -2037,6 +2045,31 @@ impl App {
             return;
         }
         self.enqueue(cmd);
+    }
+
+    /// The file "Open full log" shows: ritz-get's `<cache>/ritz-get/logs/NAME.log` (all of install.sh's output)
+    /// when this run wrote it, else the run's lines as the GUI captured them in `<cache>/ritz-get-gui/last-run.log`
+    /// (a failure before install.sh, e.g. while fetching the source, leaves an old or no build log).
+    fn run_log_file(&mut self) -> Option<PathBuf> {
+        let run = self.state.run.as_ref()?;
+        let Some(cache) = self.last_run_path.as_deref().and_then(Path::parent) else {
+            self.state.push_log(LogKind::Err, "no cache folder to find the log in".to_owned());
+            return None;
+        };
+        let cli = run.name.as_ref().map(|n| cache.join("logs").join(format!("{n}.log")));
+        if let Some(p) = cli.filter(|p| std::fs::metadata(p).and_then(|m| m.modified()).is_ok_and(|t| t >= run.started)) {
+            return Some(p);
+        }
+        let text: Vec<String> = self.state.run_lines().iter().map(|l| format!("{} {}", l.time, l.text)).collect();
+        let path = cache.parent()?.join("ritz-get-gui").join("last-run.log");
+        let written = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(&path, text.join("\n") + "\n"));
+        match written {
+            Ok(()) => Some(path),
+            Err(e) => {
+                self.state.push_log(LogKind::Err, format!("could not write {}: {e}", path.display()));
+                None
+            }
+        }
     }
 
     /// `xdg-open TARGET`, detached; not a ritz-get command, so only a Note in the log.
@@ -2486,6 +2519,31 @@ mod tests {
         assert!(a.state.last_failed(e));
         let other = a.state.listing.entries().find(|e| e.name != name).unwrap();
         assert!(!a.state.last_failed(other));
+    }
+
+    /// "Open full log": ritz-get's build log when this run wrote it, else the GUI's capture of the run.
+    #[test]
+    fn open_full_log_prefers_a_fresh_build_log() {
+        let base = std::env::temp_dir().join(format!("rgg-openlog-{}", std::process::id()));
+        let logs = base.join("ritz-get").join("logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        std::fs::write(logs.join("foo.log"), "old build\n").unwrap();
+        let mut a = loaded();
+        a.last_run_path = Some(base.join("ritz-get").join("last-run"));
+        let cmd = Command::Install { name: "foo".into(), branch: None };
+        a.state.push_log(LogKind::Cmd, "$ ritz-get install foo");
+        a.state.begin_run(&cmd);
+        a.state.push_log(LogKind::Err, "foo: FAILED (not our ref)");
+        // the build log predates the run: the captured lines are written instead
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        std::fs::File::options().write(true).open(logs.join("foo.log")).unwrap().set_modified(old).unwrap();
+        let p = a.run_log_file().unwrap();
+        assert_eq!(p, base.join("ritz-get-gui").join("last-run.log"));
+        assert!(std::fs::read_to_string(&p).unwrap().contains("foo: FAILED (not our ref)"));
+        // written during the run: that one
+        std::fs::write(logs.join("foo.log"), "# header\nfull output\n").unwrap();
+        assert_eq!(a.run_log_file().unwrap(), logs.join("foo.log"));
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
