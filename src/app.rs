@@ -720,6 +720,20 @@ impl AppState {
         self.run_lines().iter().rev().find(|l| l.kind != LogKind::Cmd)
     }
 
+    /// The newest step line of the run: what ritz-get itself says (`NAME: cloning ...`, `NAME: building`,
+    /// `NAME: FAILED (...)`, a `missing:` / `deps:` / `note:` / `restart:` / `setup:` / `needs root:` hint),
+    /// not install.sh's build output, which `RITZ_GET_GUI` streams on the same stdout/stderr with no marker
+    /// (PORCELAIN.md). So a line counts when its text before the first `: ` is a program of this run or of
+    /// the listing, or it starts with one of the hint prefixes. A build tool's own `note:` is let through.
+    pub fn run_status(&self) -> Option<&LogLine> {
+        const HINTS: [&str; 6] = ["missing:", "deps:", "note:", "restart:", "setup:", "needs root:"];
+        let run = self.run.as_ref()?;
+        let known = |n: &str| run.name.as_deref() == Some(n) || run.order.iter().any(|o| o == n) || self.listing.entries().any(|e| e.name == n);
+        self.run_lines().iter().rev().find(|l| {
+            l.kind != LogKind::Cmd && (HINTS.iter().any(|h| l.text.starts_with(h)) || l.text.split_once(": ").is_some_and(|(n, _)| known(n)))
+        })
+    }
+
     /// Update all: (programs done, programs to do). ritz-get's own count once it printed one
     /// (`#progress`, the programs of the apply list only: the ones phase 1 settled are not in it),
     /// else the programs with a final result over the programs in the set.
@@ -945,7 +959,7 @@ impl AppState {
                 let name = arg.rsplit('/').next().unwrap_or(arg).to_owned();
                 self.badges.insert(name.clone(), Badge::Needs(vec!["cargo".into(), "pkg-config".into()]));
                 let lines = [
-                    (LogKind::Info, format!("Cloning {name} (main) ...")),
+                    (LogKind::Info, format!("{name}: cloning Ritze03/{name} (main)")),
                     (LogKind::Err, "missing: cargo (try: pacman:rust dnf:cargo apt:cargo)".to_owned()),
                     (LogKind::Err, "missing: pkg-config (try: pacman:pkgconf dnf:pkgconf-pkg-config apt:pkg-config)".to_owned()),
                 ];
@@ -955,7 +969,7 @@ impl AppState {
             "install-running" => {
                 let name = arg.rsplit('/').next().unwrap_or(arg).to_owned();
                 let lines = [
-                    (LogKind::Info, format!("Cloning {name} (main) ...")),
+                    (LogKind::Info, format!("{name}: cloning Ritze03/{name} (main)")),
                     (LogKind::Info, format!("{name}: checking tools")),
                     (LogKind::Info, format!("{name}: building")),
                 ];
@@ -970,7 +984,7 @@ impl AppState {
             "install-failed" => {
                 let name = arg.rsplit('/').next().unwrap_or(arg).to_owned();
                 let lines = [
-                    (LogKind::Info, format!("Cloning {name} (main) ...")),
+                    (LogKind::Info, format!("{name}: cloning Ritze03/{name} (main)")),
                     (LogKind::Info, format!("{name}: building")),
                     (LogKind::Err, format!("{name}: FAILED (build failed: cargo exited with 101)")),
                     (LogKind::Err, "FAILED \u{2014} your installed version is unchanged and still works".to_owned()),
@@ -992,7 +1006,7 @@ impl AppState {
                 }
                 let name = arg.rsplit('/').next().unwrap_or(arg).to_owned();
                 let lines = [
-                    (LogKind::Info, format!("Cloning {name} (main) ...")),
+                    (LogKind::Info, format!("{name}: cloning Ritze03/{name} (main)")),
                     (LogKind::Info, format!("{name}: building")),
                     (LogKind::Ok, format!("{name}: installed")),
                 ];
@@ -2917,6 +2931,36 @@ mod tests {
         let (mut b, set) = update_all_started();
         line(&mut b, &format!("{}: FAILED (fetch failed)", set[0]));
         assert!(!b.state.marks.legacy);
+    }
+
+    /// The collapsed status is ritz-get's newest step line; install.sh's build output never shows there.
+    #[test]
+    fn run_status_skips_build_noise() {
+        let mut a = loaded();
+        a.run_user_command(Command::Install { name: "ritz".into(), branch: None });
+        a.next_to_start().expect("install starts");
+        assert!(a.state.run_status().is_none(), "nothing yet: the dialog says Starting");
+        let status = |a: &App| a.state.run_status().map(|l| l.text.clone());
+        let noise = [
+            "   Compiling serde v1.0.200",
+            "warning: unused variable: `x`",
+            "[12/340] Compiling C object foo.p/main.c.o",
+            "error[E0308]: mismatched types",
+            "make: *** [all] Error 2",
+            "other: not a program of this run or the listing",
+        ];
+        for step in ["ritz: cloning Ritze03/ritz (main)", "ritz: building", "missing: cargo (try: pacman:rust)", "restart: log out"] {
+            line(&mut a, step);
+            for n in noise {
+                line(&mut a, n);
+                assert_eq!(status(&a).as_deref(), Some(step), "{n:?} must not replace {step:?}");
+            }
+        }
+        line(&mut a, "ritz: FAILED (install.sh exit 1)");
+        line(&mut a, "   Compiling more v0.1.0");
+        assert_eq!(status(&a).as_deref(), Some("ritz: FAILED (install.sh exit 1)"));
+        // the log itself keeps everything
+        assert!(a.state.run_lines().iter().any(|l| l.text.starts_with("   Compiling serde")));
     }
 
     /// Markers on a single command change nothing but the counters; other `#` lines are ignored and hidden.
