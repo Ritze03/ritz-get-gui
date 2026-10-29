@@ -774,6 +774,33 @@ fn hidden_run_can_be_reopened() {
     r.drive();
 }
 
+/// The card's "Installing..." bar brings a backgrounded install's dialog back with its log; Stop kills
+/// the command, the run reads as stopped (not done), and the listing is re-read.
+#[test]
+fn hidden_install_reopens_from_its_card_and_stop_cancels_it() {
+    let mut r = Rig::new_env("ok", "full.porcelain", None, "FAKE_RITZ_GET_DELAY=0.2");
+    r.start();
+    start_in_background(&mut r, install_ritz());
+    assert!(r.app.state.run_hidden(), "the cards' bars are clickable now");
+    let lines = r.app.state.run_lines().len();
+    r.app.dispatch(&r.ctx, Action::ShowModal(Modal::Run)); // what a click on the bar sends
+    let s = &r.app.state;
+    assert_eq!((s.modal.clone(), s.run_hidden()), (Some(Modal::Run), false));
+    assert!(s.run.as_ref().is_some_and(|x| x.running()) && s.run_lines().len() >= lines, "same run, log kept");
+
+    r.app.dispatch(&r.ctx, Action::StopRun);
+    assert!(r.app.state.run.as_ref().is_some_and(|x| x.stopping), "the button reads Stopping...");
+    r.drive();
+    let s = &r.app.state;
+    assert_eq!(phase(&r), Some(RunPhase::Stopped));
+    assert_eq!(s.modal, Some(Modal::Run), "the dialog the user stopped it from stays");
+    assert!(!s.busy && s.actions_enabled() && !s.progress.contains_key("ritz"), "idle again, no FAILED bar");
+    assert!(s.log.iter().any(|l| l.kind == LogKind::Note && l.text.contains("was stopped")));
+    assert!(r.calls().iter().any(|c| c.argv.starts_with("list")), "re-listed after the stop: {:?}", r.calls());
+    r.click(Action::CloseModal);
+    assert!(r.app.state.run.is_none());
+}
+
 /// Update all opens the list dialog; its rows follow the result lines (the card bars) and the
 /// header counts the finished ones.
 #[test]

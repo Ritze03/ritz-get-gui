@@ -19,8 +19,11 @@
 //!   reports the highest-priority code (3 over 4 over 1).
 
 use std::io::{BufRead, BufReader, Read};
+use std::os::unix::process::CommandExt;
 use std::process::{Command as Process, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::model::{Command, ExitKind};
@@ -199,11 +202,51 @@ enum Msg {
 /// `xdg-open`, may hold them open forever).
 const DRAIN_GRACE: Duration = Duration::from_millis(300);
 
+/// How long [`Runner::stop`] lets ritz-get clean up after SIGTERM before it kills the whole tree.
+const STOP_GRACE: Duration = Duration::from_secs(5);
+
+/// What `stop` shares with the worker thread of the running command.
+#[derive(Default)]
+struct Live {
+    /// The child's pid (it leads its own process group, so also the group id) while it runs; 0 otherwise.
+    pid: AtomicI32,
+    /// `stop` was called: a non-zero exit is then reported as [`ExitKind::Stopped`].
+    stopped: AtomicBool,
+}
+
+unsafe extern "C" {
+    fn kill(pid: i32, sig: i32) -> i32;
+}
+
+const SIGKILL: i32 = 9;
+const SIGTERM: i32 = 15;
+
+/// `pid`'s descendants (read from `/proc`): builds started through `timeout` leave the group.
+fn descendants(pid: i32) -> Vec<i32> {
+    let mut parent_of = Vec::new();
+    for e in std::fs::read_dir("/proc").into_iter().flatten().flatten() {
+        let Some(p) = e.file_name().to_str().and_then(|n| n.parse::<i32>().ok()) else { continue };
+        // `pid (comm) S ppid ...`: comm may hold spaces and parens, so split after the last `)`.
+        let Ok(stat) = std::fs::read_to_string(e.path().join("stat")) else { continue };
+        let ppid = stat.rsplit_once(')').and_then(|(_, rest)| rest.split_whitespace().nth(1)).and_then(|x| x.parse::<i32>().ok());
+        parent_of.extend(ppid.map(|pp| (p, pp)));
+    }
+    let mut found = vec![pid];
+    let mut i = 0;
+    while i < found.len() {
+        let at = found[i];
+        found.extend(parent_of.iter().filter(|&&(_, pp)| pp == at).map(|&(p, _)| p));
+        i += 1;
+    }
+    found.split_off(1)
+}
+
 /// One command at a time.
 #[derive(Default)]
 pub struct Runner {
     running: Option<Command>,
     rx: Option<Receiver<RunnerEvent>>,
+    live: Arc<Live>,
 }
 
 impl Runner {
@@ -238,8 +281,39 @@ impl Runner {
         let (tx, rx) = mpsc::channel();
         self.running = Some(cmd.clone());
         self.rx = Some(rx);
-        std::thread::spawn(move || run_command(&bin, cmd, ctx, tx));
+        self.live = Arc::new(Live::default());
+        let live = Arc::clone(&self.live);
+        std::thread::spawn(move || run_command(&bin, cmd, ctx, tx, &live));
         true
+    }
+
+    /// Stop the running command (it then ends as [`ExitKind::Stopped`]). SIGTERM goes to ritz-get
+    /// alone first: its traps stop the build and clean up after themselves. If it is still alive
+    /// after [`STOP_GRACE`], the whole process group and every descendant get SIGKILL. The flock on
+    /// fd 9 dies with the process, so killing is safe lock-wise.
+    pub fn stop(&self) {
+        let live = Arc::clone(&self.live);
+        if self.running.is_none() || live.stopped.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let pid = live.pid.load(Ordering::SeqCst);
+        if pid > 0 {
+            // SAFETY: plain syscall; a stale pid at worst fails with ESRCH.
+            unsafe { kill(pid, SIGTERM) };
+        } // else not spawned yet: the worker signals as soon as it is
+        std::thread::spawn(move || {
+            std::thread::sleep(STOP_GRACE);
+            let pid = live.pid.load(Ordering::SeqCst);
+            if pid > 0 {
+                let kids = descendants(pid);
+                // SAFETY: as above (`-pid` = the process group).
+                unsafe { kill(-pid, SIGKILL) };
+                for k in kids {
+                    // SAFETY: as above.
+                    unsafe { kill(k, SIGKILL) };
+                }
+            }
+        });
     }
 
     /// Drain the events produced since the last call (non-blocking). After a `Finished` the runner
@@ -278,7 +352,7 @@ impl Runner {
 }
 
 /// Worker thread body: spawn, stream, wait, report.
-fn run_command(bin: &str, cmd: Command, ctx: egui::Context, tx: Sender<RunnerEvent>) {
+fn run_command(bin: &str, cmd: Command, ctx: egui::Context, tx: Sender<RunnerEvent>, live: &Arc<Live>) {
     let emit = |ev: RunnerEvent| {
         let _ = tx.send(ev);
         ctx.request_repaint();
@@ -290,7 +364,8 @@ fn run_command(bin: &str, cmd: Command, ctx: egui::Context, tx: Sender<RunnerEve
         .env("RITZ_GET_GUI", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        .process_group(0); // its own group, so Stop reaches the builds it starts
     if cmd.uses_sudo() {
         proc.env("RITZ_GET_SUDO", "pkexec");
     } else {
@@ -308,6 +383,12 @@ fn run_command(bin: &str, cmd: Command, ctx: egui::Context, tx: Sender<RunnerEve
         }
     };
 
+    let pid = child.id() as i32;
+    live.pid.store(pid, Ordering::SeqCst);
+    if live.stopped.load(Ordering::SeqCst) {
+        // SAFETY: plain syscall (Stop came before the spawn).
+        unsafe { kill(pid, SIGTERM) };
+    }
     let (mtx, mrx) = mpsc::channel::<Msg>();
     if let Some(out) = child.stdout.take() {
         spawn_reader(out, Stream::Stdout, mtx.clone());
@@ -317,8 +398,14 @@ fn run_command(bin: &str, cmd: Command, ctx: egui::Context, tx: Sender<RunnerEve
     }
     {
         let mtx = mtx.clone();
+        let live = Arc::clone(live);
         std::thread::spawn(move || {
             let code = child.wait().ok().and_then(|s| s.code());
+            live.pid.store(0, Ordering::SeqCst);
+            if live.stopped.load(Ordering::SeqCst) {
+                // SAFETY: as in `stop`; whatever the group still holds (a build ritz-get left) goes.
+                unsafe { kill(-pid, SIGKILL) };
+            }
             let _ = mtx.send(Msg::Exited(code));
         });
     }
@@ -343,7 +430,12 @@ fn run_command(bin: &str, cmd: Command, ctx: egui::Context, tx: Sender<RunnerEve
             }
         }
     }
-    emit(RunnerEvent::Finished { command: cmd, exit: ExitKind::from_code(code), captured });
+    let exit = match ExitKind::from_code(code) {
+        ExitKind::Ok => ExitKind::Ok,
+        _ if live.stopped.load(Ordering::SeqCst) => ExitKind::Stopped,
+        other => other,
+    };
+    emit(RunnerEvent::Finished { command: cmd, exit, captured });
 }
 
 fn spawn_reader<R: Read + Send + 'static>(pipe: R, stream: Stream, tx: Sender<Msg>) {
@@ -777,6 +869,43 @@ if read -r line; then echo "stdin=data"; else echo "stdin=eof"; fi"#,
         // a non-executable file is also a spawn failure
         let ev = run("/etc/hostname", Command::Hold { name: n("a") });
         assert_eq!(finished(&ev).1, ExitKind::SpawnFailed);
+    }
+
+    /// Stop ends the command as `Stopped` and takes what it started along (the group's leftovers).
+    #[test]
+    fn stop_kills_the_whole_process_group() {
+        let dir = std::env::temp_dir().join(format!("ritz-get-gui-stop-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pidfile = dir.join("child.pid");
+        let script = dir.join("stop.sh");
+        std::fs::write(&script, format!("#!/bin/sh\nsleep 60 &\necho $! > '{}'\nwait\n", pidfile.display())).unwrap();
+        std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+
+        let mut r = Runner::new();
+        assert!(r.start_with(script.to_string_lossy().into_owned(), Command::Hold { name: n("a") }, egui::Context::default()));
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let child: i32 = loop {
+            if let Some(p) = std::fs::read_to_string(&pidfile).ok().and_then(|t| t.trim().parse().ok()) {
+                break p;
+            }
+            assert!(Instant::now() < deadline, "the script never started its child");
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        r.stop();
+        let mut events = Vec::new();
+        while !matches!(events.last(), Some(RunnerEvent::Finished { .. })) {
+            events.extend(r.poll());
+            assert!(Instant::now() < deadline, "never finished: {events:?}");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(finished(&events).1, ExitKind::Stopped);
+        // gone, or a zombie waiting for a reaper that is not its parent
+        let alive = || std::fs::read_to_string(format!("/proc/{child}/stat")).is_ok_and(|s| !s.contains(") Z "));
+        while alive() {
+            assert!(Instant::now() < deadline, "the grandchild survived Stop");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

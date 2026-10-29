@@ -488,6 +488,13 @@ fn button_row(ui: &mut egui::Ui, left: impl FnOnce(&mut egui::Ui), right: impl F
     });
 }
 
+/// The red Stop button of a running command; "Stopping…" (disabled) once pressed.
+fn stop_btn(ui: &mut egui::Ui, stopping: bool) -> bool {
+    let label = if stopping { "Stopping\u{2026}" } else { "Stop" };
+    let w = ui.painter().layout_no_wrap(label.to_owned(), theme::regular(13.0), theme::TEXT).size().x.ceil() + 30.0;
+    ui.add_enabled(!stopping, theme::danger_button(label).min_size(egui::vec2(w, BTN_H))).clicked()
+}
+
 /// The `[Show log] [Copy log]` group on the left of a button row.
 fn log_buttons(ui: &mut egui::Ui, state: &AppState, actions: &mut Vec<Action>) {
     log_toggle(ui, state.run_log_open, actions);
@@ -573,6 +580,7 @@ fn run_one(ctx: &egui::Context, state: &AppState, run: &Run, actions: &mut Vec<A
         RunPhase::Deps { .. } => (Some(Mark::Warn), "Missing tools".to_owned()),
         RunPhase::Setup => (Some(Mark::Warn), "Needs setup in a terminal".to_owned()),
         RunPhase::Busy => (Some(Mark::Warn), "ritz-get is busy".to_owned()),
+        RunPhase::Stopped => (Some(Mark::Warn), format!("Stopped {} {display}", verb.gerund().to_lowercase())),
     };
     let sub = sub_line(run, entry);
     let log_h = room(ctx, 330.0, 90.0, 150.0);
@@ -597,11 +605,16 @@ fn run_one(ctx: &egui::Context, state: &AppState, run: &Run, actions: &mut Vec<A
                 if state.run_log_open {
                     run_log(ui, state, log_h);
                 }
+                let mut stop = false;
                 button_row(ui, |ui| log_buttons(ui, state, actions), |ui| {
                     let bg = mbtn(ui, false, "Run in background");
                     focus_first_frames(ui.ctx(), &bg, tag);
                     close |= bg.clicked();
+                    stop = stop_btn(ui, run.stopping);
                 });
+                if stop {
+                    actions.push(Action::StopRun);
+                }
             }
             RunPhase::Done { .. } if menu => {
                 divider(ui);
@@ -676,6 +689,17 @@ fn run_one(ctx: &egui::Context, state: &AppState, run: &Run, actions: &mut Vec<A
                         actions.push(Action::CopyToClipboard(cmd.clone()));
                     }
                     close |= mbtn(ui, false, "Close").clicked();
+                });
+            }
+            RunPhase::Stopped => {
+                body(ui, "Stopped by you. Whatever it had started was cancelled; open the log to see how far it got.");
+                if state.run_log_open {
+                    run_log(ui, state, log_h);
+                }
+                button_row(ui, |ui| log_buttons(ui, state, actions), |ui| {
+                    let c = mbtn(ui, false, "Close");
+                    focus_first_frames(ui.ctx(), &c, tag);
+                    close |= c.clicked();
                 });
             }
             RunPhase::Busy => {
@@ -921,7 +945,8 @@ fn run_all(ctx: &egui::Context, state: &AppState, run: &Run, actions: &mut Vec<A
     } else {
         Some(Mark::Warn)
     };
-    let title = if running { state.run_all_title() } else { "Update finished".to_owned() };
+    let stopped = run.phase == RunPhase::Stopped;
+    let title = if running { state.run_all_title() } else if stopped { "Update stopped".to_owned() } else { "Update finished".to_owned() };
     let sub = if running && counted {
         format!("{done} of {total} finished")
     } else if running && state.marks.started {
@@ -990,6 +1015,7 @@ fn run_all(ctx: &egui::Context, state: &AppState, run: &Run, actions: &mut Vec<A
             }
             match &run.phase {
                 RunPhase::Failed { reason } if failed_names.is_empty() => body(ui, &format!("The update stopped: {reason}.")),
+                RunPhase::Stopped => body(ui, "Stopped by you. Programs that were already done keep their update."),
                 RunPhase::Busy => body(ui, "Another ritz-get is running. Wait for it to finish, then try again."),
                 RunPhase::Setup => body(ui, "Some programs need setup in a terminal. The log has the command for each."),
                 _ => {}
@@ -1007,17 +1033,22 @@ fn run_all(ctx: &egui::Context, state: &AppState, run: &Run, actions: &mut Vec<A
         if state.run_log_open {
             run_log(ui, state, log_h);
         }
+        let mut stop = false;
         button_row(ui, |ui| log_buttons(ui, state, actions), |ui| {
             if running {
                 let bg = mbtn(ui, false, "Run in background");
                 focus_first_frames(ui.ctx(), &bg, tag);
                 close |= bg.clicked();
+                stop = stop_btn(ui, run.stopping);
             } else {
                 let c = mbtn(ui, true, "Close");
                 focus_first_frames(ui.ctx(), &c, tag);
                 close |= c.clicked();
             }
         });
+        if stop {
+            actions.push(Action::StopRun);
+        }
         close
     })
 }

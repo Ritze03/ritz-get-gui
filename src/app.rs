@@ -138,6 +138,8 @@ pub enum RunPhase {
     Setup,
     /// Exit 5: another ritz-get holds the lock.
     Busy,
+    /// The user stopped the command (Stop button); the build, if any, was killed.
+    Stopped,
 }
 
 /// The install / update / repair / switch / reset / remove (or Update all) the progress dialog shows.
@@ -152,6 +154,8 @@ pub struct Run {
     /// bars themselves are `AppState::progress`).
     pub order: Vec<String>,
     pub phase: RunPhase,
+    /// Stop was pressed; the command has not ended yet.
+    pub stopping: bool,
     /// The command ended well; waiting for the refreshed listing to decide the start-menu question.
     pub settling: bool,
     /// The refreshed listing asks for the start-menu question (D47).
@@ -641,10 +645,10 @@ impl AppState {
             if !c.is_final() {
                 if exit.is_ok() {
                     c.phase = Progress::Done;
-                } else if single {
+                } else if single && exit != ExitKind::Stopped {
                     c.phase = Progress::Failed;
                 } else {
-                    return false; // Update all stopped early: what it never reached shows nothing
+                    return false; // Update all stopped early (or Stop was pressed): what it never reached shows nothing
                 }
             }
             c.ended = Some(now);
@@ -691,6 +695,7 @@ impl AppState {
             name: cmd.target().map(str::to_owned),
             order: self.progress_order.clone(),
             phase: RunPhase::Running,
+            stopping: false,
             settling: false,
             ask_menu: false,
             change: None,
@@ -774,6 +779,8 @@ impl AppState {
         let needs = match &run.phase {
             RunPhase::Running => return,
             RunPhase::Done { menu } => *menu,
+            // The user asked for it; nothing to tell them unless the dialog is open.
+            RunPhase::Stopped => false,
             _ => true,
         };
         if needs {
@@ -815,6 +822,7 @@ impl AppState {
             ExitKind::Deps => return,
             ExitKind::NeedsRoot => RunPhase::Setup,
             ExitKind::Busy => RunPhase::Busy,
+            ExitKind::Stopped => RunPhase::Stopped,
             ExitKind::Failed => RunPhase::Failed { reason: reason().unwrap_or_else(|| "it failed".into()) },
             ExitKind::Usage => RunPhase::Failed { reason: "usage error (exit 2)".into() },
             ExitKind::SpawnFailed => {
@@ -837,6 +845,11 @@ impl AppState {
         self.after_run_phase();
     }
 
+    /// A run exists and its dialog is hidden: the cards' bars are the way back into it.
+    pub fn run_hidden(&self) -> bool {
+        self.run.is_some() && self.modal != Some(Modal::Run)
+    }
+
     /// While the dialog is hidden: what the "show it again" button says. `None` = nothing to show.
     pub fn reopen_label(&self) -> Option<String> {
         let run = self.run.as_ref().filter(|_| self.modal != Some(Modal::Run))?;
@@ -852,6 +865,8 @@ impl AppState {
             (RunPhase::Deps { .. }, _) => "Missing tools".into(),
             (RunPhase::Setup, _) => "Setup needed".into(),
             (RunPhase::Busy, _) => "ritz-get is busy".into(),
+            (RunPhase::Stopped, None) => "Update stopped".into(),
+            (RunPhase::Stopped, Some(w)) => format!("{w}: {} stopped", run.verb.base()),
         })
     }
 
@@ -1348,6 +1363,7 @@ fn exit_code(e: ExitKind) -> i32 {
         ExitKind::NeedsRoot => 4,
         ExitKind::Busy => 5,
         ExitKind::SpawnFailed => -127,
+        ExitKind::Stopped => 143,
         ExitKind::Other(n) => n,
     }
 }
@@ -1813,6 +1829,7 @@ impl App {
                 return; // nothing changed: no refresh
             }
             ExitKind::SpawnFailed => {}
+            ExitKind::Stopped => self.state.push_log(LogKind::Note, format!("`{command}` was stopped")),
             ExitKind::Other(n) => {
                 self.state.push_log(LogKind::Err, format!("`{command}` exited with code {n}"));
             }
@@ -1974,6 +1991,14 @@ impl App {
             }
             Action::Restart => self.restart_self(),
             Action::Retry => self.begin_startup(),
+            Action::StopRun => {
+                // Only the run's own command: a query running ahead of it is not what the dialog shows.
+                let run = self.state.run.as_mut().filter(|r| r.running() && self.in_flight.as_ref() == Some(&r.cmd));
+                if let Some(run) = run {
+                    run.stopping = true;
+                    self.runner.stop();
+                }
+            }
             // Update all: a `switch` per pending branch, then the normal `update` for the rest.
             Action::Update { name: None } if self.state.listing.entries().any(|e| e.updatable() && e.pending_branch.is_some()) => {
                 let switches: Vec<Command> = self

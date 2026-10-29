@@ -557,7 +557,7 @@ struct Item {
     enabled: bool,
     /// `None` = informative, never clickable ("Up to date").
     action: Option<Action>,
-    /// A progress row (running / finished install, update, ...): coloured by its tone, never clickable.
+    /// A progress row (running / finished install, update, ...): coloured by its tone; clickable only as the way back into a hidden progress dialog.
     tone: Option<Tone>,
 }
 
@@ -633,7 +633,7 @@ fn groups(state: &AppState, e: &Entry) -> Vec<Vec<Item>> {
     };
     let mut groups: Vec<Vec<Item>> = groups.into_iter().filter(|g| !g.is_empty()).collect();
     if let (Some(cp), Some(life)) = (state.progress.get(&e.name), groups.first_mut()) {
-        progress_row(cp, life);
+        progress_row(cp, life, state.run_hidden());
     }
     groups
 }
@@ -641,7 +641,7 @@ fn groups(state: &AppState, e: &Entry) -> Vec<Vec<Item>> {
 /// The running / just finished command's row: replaces its lifecycle row (Install / Update / "Up to
 /// date" are the first row; Repair its own) with the bar's label, small and not clickable. Switch
 /// and Reset have no row of their own.
-fn progress_row(cp: &CardProgress, life: &mut Vec<Item>) {
+fn progress_row(cp: &CardProgress, life: &mut Vec<Item>, back: bool) {
     let tone = cp.tone();
     let row = Item {
         glyph: match tone {
@@ -652,8 +652,8 @@ fn progress_row(cp: &CardProgress, life: &mut Vec<Item>) {
         },
         text: cp.label().to_owned(),
         danger: false,
-        enabled: false,
-        action: None,
+        enabled: back,
+        action: back.then_some(Action::ShowModal(Modal::Run)),
         tone: Some(tone),
     };
     match cp.verb {
