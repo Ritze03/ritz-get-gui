@@ -34,7 +34,7 @@ const SEARCH_MIN_CENTRED: f32 = 150.0;
 const GEAR: f32 = ROW1_H;
 /// The wordmark, with the app's own icon (`BRAND_ICON` px square) and a gap in front of it.
 const BRAND: &str = "Ritz-Get-GUI";
-const BRAND_ICON: f32 = 22.0;
+const BRAND_ICON: f32 = 32.0;
 const BRAND_GAP: f32 = 8.0;
 /// Canvas padding of a capsule half.
 const HALF_PAD: f32 = 12.0;
@@ -125,7 +125,7 @@ fn plan(m: &Metrics, origin: Pos2) -> Plan {
     let (capsule, check_w) = if narrow { (capsule_for(m.check_icon), m.check_icon) } else { (wide_capsule, m.check_full) };
     let check = at(capsule.left() + 1.0, capsule.top() + 1.0, check_w, ROW1_H - 2.0);
     let upd = at(check.right() + 1.0, check.top(), m.upd, ROW1_H - 2.0);
-    let brand = at(left, origin.y + (ROW1_H - 22.0) / 2.0, m.brand, 22.0);
+    let brand = at(left, origin.y + (ROW1_H - BRAND_ICON) / 2.0, m.brand, BRAND_ICON);
 
     let mut y = ROW1_H;
     let search = if narrow {
@@ -597,7 +597,7 @@ mod tests {
         Metrics {
             w,
             centre_x: 8.0 + w / 2.0,
-            brand: 126.0,
+            brand: 136.0,
             check_full: 164.0,
             check_icon: ICON_HALF,
             upd: 134.0,
@@ -618,9 +618,11 @@ mod tests {
             let (p, right) = plan_at(window_w);
             assert!(!p.narrow, "{window_w} must be the wide form");
             // Row 1: everything on one 30 px row, the search centred in the window.
-            for r in [p.search, p.capsule, p.gear, p.brand] {
+            for r in [p.search, p.capsule, p.gear] {
                 assert!(r.top() >= 10.0 - 0.01 && r.bottom() <= 40.0 + 0.01, "{window_w}: {r:?} outside row 1");
             }
+            // The 32 px brand icon overhangs the 30 px row by 1 px each side (into the bar padding and the row gap), centred.
+            assert!((p.brand.center().y - 25.0).abs() < 0.01 && p.brand.height() == BRAND_ICON);
             assert!((p.search.center().x - window_w / 2.0).abs() < 0.01, "search centred: {:?}", p.search);
             assert!(p.search.width() >= SEARCH_MIN_CENTRED && p.search.width() <= SEARCH_W);
             assert!(p.search.left() >= p.brand.right() + GAP - 0.01 && p.search.right() <= p.capsule.left() - GAP + 0.01);
