@@ -32,6 +32,10 @@ const SEARCH_W: f32 = 460.0;
 /// Narrowest search pill that is still kept centred in the window (below this: narrow form).
 const SEARCH_MIN_CENTRED: f32 = 150.0;
 const GEAR: f32 = ROW1_H;
+/// The wordmark, with the app's own icon (`BRAND_ICON` px square) and a gap in front of it.
+const BRAND: &str = "Ritz-Get-GUI";
+const BRAND_ICON: f32 = 22.0;
+const BRAND_GAP: f32 = 8.0;
 /// Canvas padding of a capsule half.
 const HALF_PAD: f32 = 12.0;
 /// Icon-only capsule half (canvas `padding: 0 10px` around a 14 px icon).
@@ -165,7 +169,7 @@ pub fn draw(ui: &mut Ui, state: &AppState, actions: &mut Vec<Action>) {
     let settings = state.view == View::Settings;
 
     // ---- measure ----
-    let brand_w = text_w(ui, "ritz-get-gui", theme::bold(16.0)).ceil();
+    let brand_w = BRAND_ICON + BRAND_GAP + text_w(ui, BRAND, theme::bold(16.0)).ceil();
     let counts: Vec<String> = Filter::ALL.iter().map(|&f| state.counts().get(f).to_string()).collect();
     let mut tabs = [0.0_f32; 4];
     for (i, f) in Filter::ALL.iter().enumerate() {
@@ -214,7 +218,12 @@ pub fn draw(ui: &mut Ui, state: &AppState, actions: &mut Vec<Action>) {
         0.0,
         theme::BORDER,
     );
-    ui.painter().text(p.brand.left_center(), Align2::LEFT_CENTER, "ritz-get-gui", theme::bold(16.0), theme::ACCENT);
+    if let Some(tex) = crate::icons::own_texture(ui.ctx(), BRAND_ICON) {
+        let r = Rect::from_min_size(Pos2::new(p.brand.left(), p.brand.center().y - BRAND_ICON / 2.0), vec2(BRAND_ICON, BRAND_ICON));
+        egui::Image::from_texture(egui::load::SizedTexture::new(tex.id(), r.size())).paint_at(ui, r);
+    }
+    let text_pos = Pos2::new(p.brand.left() + BRAND_ICON + BRAND_GAP, p.brand.center().y);
+    ui.painter().text(text_pos, Align2::LEFT_CENTER, BRAND, theme::bold(16.0), theme::ACCENT);
     search_box(ui, p.search, state, actions);
     capsule(ui, &p, state, reopen.as_deref(), actions);
     let r = gear(ui, p.gear, settings);
@@ -588,7 +597,7 @@ mod tests {
         Metrics {
             w,
             centre_x: 8.0 + w / 2.0,
-            brand: 96.0,
+            brand: 126.0,
             check_full: 164.0,
             check_icon: ICON_HALF,
             upd: 134.0,

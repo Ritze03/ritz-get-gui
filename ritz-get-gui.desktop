@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=ritz-get-gui
+Name=Ritz-Get-GUI
 Comment=Graphical front end for ritz-get
 Exec=ritz-get-gui
 Icon=ritz-get-gui
