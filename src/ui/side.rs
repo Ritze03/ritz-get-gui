@@ -47,6 +47,10 @@ fn body(ui: &mut egui::Ui, state: &AppState, e: &Entry, actions: &mut Vec<Action
     hero(ui, state, e, actions);
     ui.add_space(theme::GAP);
 
+    if e.is_branch_gone() {
+        branch_gone_notice(ui, e);
+        ui.add_space(theme::GAP);
+    }
     if e.is_modified() {
         modified_notice(ui, e);
         ui.add_space(theme::GAP);
@@ -197,6 +201,18 @@ fn data_tooltip(e: &Entry) -> String {
 
 fn plural(n: u32, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
+}
+
+/// The installed branch was deleted on the remote: say so; the Branch picker in the Program card is the fix.
+fn branch_gone_notice(ui: &mut egui::Ui, e: &Entry) {
+    let frame = egui::Frame::new()
+        .fill(theme::with_alpha(theme::WARN, 0.16))
+        .stroke(Stroke::new(1.0_f32, theme::with_alpha(theme::WARN, 0.42)))
+        .corner_radius(theme::RADIUS)
+        .inner_margin(Margin::same(theme::CARD_PAD));
+    theme::framed(ui, frame, |ui| {
+        ui.label(RichText::new(super::pills::branch_gone_text(e)).size(12.0).color(theme::WARN));
+    });
 }
 
 /// D22: the modified notice. PORCELAIN only gives counts, not file names.
@@ -843,6 +859,24 @@ mod tests {
         if let Some(u) = g[0].iter().find(|i| i.text == "Update") {
             assert!(!u.enabled);
         }
+    }
+
+    #[test]
+    fn branch_gone_offers_no_update_until_a_branch_is_picked() {
+        let mut s = st();
+        let before = s.counts().updates;
+        let e = s.listing.sections.iter_mut().flat_map(|x| x.entries.iter_mut()).find(|e| e.status == Status::Current).unwrap();
+        e.status = Status::BranchGone;
+        e.branch = Some("feature-x".into());
+        e.behind = None;
+        let id = e.id();
+        assert_eq!(s.counts().updates, before);
+        assert!(!find(&s, &id).updatable());
+        assert!(groups(&s, find(&s, &id))[0].iter().all(|i| i.text != "Update"));
+        // picking another branch makes Update (a switch) available again
+        s.pending.insert(find(&s, &id).name.clone(), "main".into());
+        s.sync_pending();
+        assert!(groups(&s, find(&s, &id))[0].iter().any(|i| i.text == "Update"));
     }
 
     #[test]

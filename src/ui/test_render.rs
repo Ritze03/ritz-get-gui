@@ -919,7 +919,7 @@ mod tests {
                             for k in [
                                 PillKind::Ok, PillKind::Update, PillKind::Missing, PillKind::Needs, PillKind::Web,
                                 PillKind::Held, PillKind::Modified, PillKind::Setup, PillKind::Offline,
-                                PillKind::FetchFailed, PillKind::SetupNeeded,
+                                PillKind::FetchFailed, PillKind::BranchGone, PillKind::SetupNeeded,
                             ] {
                                 theme::pill(ui, k.label(), k.color());
                             }
