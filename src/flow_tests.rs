@@ -7,7 +7,7 @@
 //! Checks (plan "Done when"):
 //! * startup runs `dir`, `list --offline --porcelain --data`, THEN `list --porcelain --data`, `shortcuts`
 //!   (every list carries `--data`; an old ritz-get that exits 2 on it is asked again without);
-//! * every call has `gui=1` and `tty=0`; only install / remove / switch / reset have
+//! * every call has `gui=1` and `tty=0`; only install / remove / switch / reset / update have
 //!   `sudo=pkexec` (`delete-data` never does); `update`, `reset` and `dir PATH` always carry `--yes`;
 //! * the shortcut action is `shortcut NAME` for column `off`, `shortcut NAME --remove` for `on`,
 //!   and the action list offers none for `-`;
@@ -90,8 +90,8 @@ fn assert_call_invariants(calls: &[Call]) {
         let cmd = w.first().copied().unwrap_or("");
         assert_eq!(c.gui, "1", "RITZ_GET_GUI=1 on every call: {c:?}");
         assert_eq!(c.tty, "0", "stdin is never a terminal: {c:?}");
-        let sudo = matches!(cmd, "install" | "remove" | "switch" | "reset");
-        assert_eq!(c.sudo, if sudo { "pkexec" } else { "-" }, "RITZ_GET_SUDO only on install/remove/switch/reset: {c:?}");
+        let sudo = matches!(cmd, "install" | "remove" | "switch" | "reset" | "update");
+        assert_eq!(c.sudo, if sudo { "pkexec" } else { "-" }, "RITZ_GET_SUDO only on install/remove/switch/reset/update: {c:?}");
         if matches!(cmd, "update" | "reset") {
             assert!(w.contains(&"--yes"), "{cmd} always carries --yes: {c:?}");
         }
@@ -342,7 +342,7 @@ fn every_action_makes_the_right_call() {
     assert_eq!(call("switch ts6tray dev").sudo, "pkexec");
     assert_eq!(call("remove old-experiment").sudo, "pkexec");
     assert_eq!(call("reset geofinder --yes").sudo, "pkexec");
-    assert_eq!(call("update --yes").sudo, "-");
+    assert_eq!(call("update --yes").sudo, "pkexec");
     assert_eq!(call("shortcut ccorral").sudo, "-");
     assert_eq!(call("delete-data ritz --yes").sudo, "-");
     assert_eq!(call("dir /srv/ritz --yes").sudo, "-");
