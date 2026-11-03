@@ -475,11 +475,15 @@ impl Command {
         }
     }
 
-    /// D48: only install, remove, switch and reset get `RITZ_GET_SUDO=pkexec`.
+    /// D48: only install, remove, switch, reset and update (also Update all) get `RITZ_GET_SUDO=pkexec`.
     pub fn uses_sudo(&self) -> bool {
         matches!(
             self,
-            Command::Install { .. } | Command::Remove { .. } | Command::Switch { .. } | Command::Reset { .. }
+            Command::Install { .. }
+                | Command::Remove { .. }
+                | Command::Switch { .. }
+                | Command::Reset { .. }
+                | Command::Update { .. }
         )
     }
 
@@ -858,7 +862,8 @@ mod tests {
         assert_eq!(a(Command::Shortcuts { path: Some("/s".into()) }), "shortcuts /s");
         assert_eq!(a(Command::Shortcuts { path: None }), "shortcuts");
         assert!(Command::Remove { name: "x".into() }.uses_sudo());
-        assert!(!Command::Update { name: None }.uses_sudo());
+        assert!(Command::Update { name: None }.uses_sudo());
+        assert!(Command::Update { name: Some("x".into()) }.uses_sudo());
     }
 
     #[test]

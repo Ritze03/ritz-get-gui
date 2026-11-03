@@ -40,7 +40,7 @@ and is added by ritz-get (`ritz-get shortcut ritz-get-gui`). To remove: `./insta
 The GUI only runs `ritz-get` commands, one at a time, and reads their output. Nothing else
 touches your programs. Every command runs with `RITZ_GET_GUI=1` and with stdin closed, and the
 program list comes from `ritz-get list --porcelain` (a stable format for frontends, described in
-ritz-get's `PORCELAIN.md`). Commands that may need root (install, remove, switch, reset) run
+ritz-get's `PORCELAIN.md`). Commands that may need root (install, remove, switch, reset, update) run
 with `RITZ_GET_SUDO=pkexec`, so a graphical password prompt appears when needed. If ritz-get
 reports a porcelain version this GUI doesn't know, the GUI refuses to guess and tells you to update.
 

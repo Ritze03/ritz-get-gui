@@ -773,7 +773,7 @@ fn run_one(ctx: &egui::Context, state: &AppState, run: &Run, actions: &mut Vec<A
                 close |= deps_block(ui, &intro, &capital(verb), missing, command.as_deref(), actions);
             }
             RunPhase::Setup => {
-                body(ui, &format!("{display} needs a system package that only a terminal install can set up. Run this in a terminal, then press {} again.", capital(verb)));
+                body(ui, &format!("{display} needs your password for a one-time setup step, and no password prompt could be shown here. Run this in a terminal and enter your password there, then press {} again.", capital(verb)));
                 let cmd = format!("ritz-get install {name}");
                 code_box(ui, &cmd);
                 button_row(ui, |_| {}, |ui| {

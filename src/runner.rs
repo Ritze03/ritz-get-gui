@@ -2,7 +2,7 @@
 //! output to the UI thread.
 //!
 //! > I3: Command runner: one at a time, streaming thread, `request_repaint`. Env per PORCELAIN.md
-//! > (`RITZ_GET_GUI=1` always; `RITZ_GET_SUDO=pkexec` on install/remove/switch/reset only; `--yes`
+//! > (`RITZ_GET_GUI=1` always; `RITZ_GET_SUDO=pkexec` on install/remove/switch/reset/update only; `--yes`
 //! > on update/reset; stdin `/dev/null`). Exit 0-5 mapping; captures `missing:`, `deps:`,
 //! > `needs root:` and the per-program `NAME: ...` lines; `branches` parsing; `RITZ_GET` override.
 //!
