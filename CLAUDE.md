@@ -29,7 +29,7 @@ optional, on-demand read.
 - **Version policy** — @superdoc/claude-instructions/documentation-version-policy.md — how
   this project bumps doc/version markers.
 
-Path base: `CLAUDE.md` uses repo-root-relative paths (`@superdoc/...`, `` `superdoc/...` ``);
+Path base: `CLAUDE.md` uses repo-root-relative paths (in `@` refs and plain `superdoc/...` links);
 links *inside* docs are docs-relative. Precedence: `CLAUDE.md` is authoritative for
 rules, docs are the reference — reconcile to `CLAUDE.md` on conflict. `@`-budget:
 force-load a file only if its absence would let the agent do the wrong thing on *any*

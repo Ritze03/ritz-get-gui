@@ -35,7 +35,7 @@ Since commit 6d90aa7 install, remove, switch, reset and update (also Update all)
 
 ### Last-run failures
 
-At startup and after every `update`, `App::reload_last_run` reads ritz-get's `<cache>/ritz-get/last-run` (`last_run_file_from`) with `parse_last_run`: first line `<ISO time> N updated, N skipped, N failed`, optional `failed: NAME NAME` line; anything else is `None`. Effects: the status bar shows "last update failed (see log)" (red, opens `Modal::Log`) when `failed > 0` (`last_update_failed`), and each program named in `failed:` gets the FAILED pill on its card (`AppState::last_failed`, `src/ui/pills.rs`). This is the result of a background (scheduled) update, not of the GUI's own runs.
+At startup and after every `update`, `App::reload_last_run` reads ritz-get's `<cache>/ritz-get/last-run` (`last_run_file_from`) with `parse_last_run`: first line `<ISO time> N updated, N skipped, N failed`, optional `failed: NAME NAME` line; anything else is `None`. Effects: the status bar shows "last update failed (see log)" (red, opens `Modal::Log`) when `failed > 0` (`last_update_failed`), and each program named in `failed:` gets the FAILED pill on its card (`AppState::last_failed`, `src/ui/pills.rs`). *Why:* ritz-get's `cmd_update` overwrites that file at the end of every `update` run (no matter who started it), so it reflects the most recent update, whether run from the GUI, a terminal or a scheduled job. This is also why the GUI reloads it after every `update`.
 
 ### Porcelain refused
 

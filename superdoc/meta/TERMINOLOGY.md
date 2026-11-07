@@ -24,7 +24,7 @@ appending. This file stays in context for the whole session.
 - **Behind / Modified / Ahead / Dirty** — Commits behind upstream; local changes; local commits not upstream; changed-file count. See `superdoc/features/programs/program-list.md`.
 - **Status vs State** — State is the entry's kind of presence (installed, available, offline, ...); Status is how an installed one compares to upstream. See `superdoc/features/ritz-get-bridge/porcelain-parsing.md`.
 - **offline listing** — `list --offline`: the fast first paint at startup, replaced by the online list. See `superdoc/architecture/overview.md`.
-- **Update all (N)** — Top-bar button; N counts programs that are behind, not held, not modified. See `superdoc/features/programs/program-actions.md`.
+- **Update all (N)** — Top-bar button; N counts programs that are behind, not held, not modified. See `superdoc/features/programs/program-list.md`.
 - **Run / Progress dialog / Run in background** — Modal for a running install/update/etc.; "Run in background" closes it while the command continues. See `superdoc/features/progress-dialog/run-dialog.md`.
 - **session badge** — NEEDS tool / SETUP NEEDED pill set from exit 3/4 in this session, not from porcelain. See `superdoc/features/progress-dialog/error-flows.md`.
 - **exit kinds 0-5** — ritz-get exit codes as `ExitKind`: ok, failed, usage, missing tools, needs root, busy. See `superdoc/features/ritz-get-bridge/command-runner.md`.
@@ -32,13 +32,13 @@ appending. This file stays in context for the whole session.
 - **Setup needed** — Exit 4: the program needs a root setup step in a terminal. See `superdoc/features/progress-dialog/error-flows.md`.
 - **pkexec / RITZ_GET_SUDO** — Env var the runner sets to `pkexec` for root-capable commands (graphical password prompt). See `superdoc/features/ritz-get-bridge/command-runner.md`.
 - **Last run** — ritz-get's last-update record (`failed:` names mark cards). See `superdoc/features/progress-dialog/error-flows.md`.
-- **Shortcut (on, off, `-`)** — Start-menu entry state of an installed program; `-` = not installed or no `.desktop` file. See `superdoc/features/packaging/install-and-desktop.md`.
+- **Shortcut (on, off, `-`)** — Start-menu entry state of an installed program; `-` = not installed or no `.desktop` file. See `superdoc/features/programs/program-actions.md`.
 - **Hold / Unhold** — Turn a program's auto-update off / on. See `superdoc/features/programs/program-actions.md`.
 - **Switch** — Change an installed program's branch (`switch NAME BRANCH`). See `superdoc/features/programs/program-actions.md`.
 - **Reset** — Discard local changes (`reset NAME --yes`), after a confirm modal. See `superdoc/features/programs/program-actions.md`.
 - **Repair** — Re-run install on an installed program (`install NAME`). See `superdoc/features/programs/program-actions.md`.
 - **Delete data** — Remove an uninstalled program's data folders (`delete-data`). See `superdoc/features/programs/program-actions.md`.
-- **Restart bar** — Strip shown after ritz-get-gui updated itself, offering Restart. See `superdoc/features/progress-dialog/error-flows.md`.
+- **Restart bar** — Strip shown after ritz-get-gui updated itself, offering Restart. See `superdoc/features/programs/program-list.md`.
 - **Touch mode** — Setting: drag-to-scroll in every scroll area. See `superdoc/features/settings/settings.md`.
 - **Graphite** — The app's single dark theme (colour tokens in `src/theme.rs`). See `superdoc/ui/STYLING-GUIDE.md`.
 - **Pill** — Small uppercase status label on a card; one mapping in `src/ui/pills.rs`. See `superdoc/ui/STYLING-GUIDE.md`.
