@@ -42,6 +42,14 @@ Helpers: `theme::regular`, `theme::medium` (pills), `theme::bold` (names, titles
 `theme::mono`. Icon glyphs come from `theme::glyph::*` (bundled Nerd font via the fallback chain);
 paint them with `theme::paint_glyph` or `theme::icon_button`, which centre on the glyph's ink.
 
+That centring is only as exact as the pixel grid: `theme::centered_pos` centres the glyph's whole-pixel
+box, and the tessellator then rounds the position to a whole pixel, half-pixels going right and down.
+So a glyph box of odd pixel size in an even-sized control sits about 0.5 px off, and the box can
+differ from the real ink by a further fraction. If an icon looks off-centre, pick a font size whose
+box parity matches the control, as `src/ui/topbar.rs:gear` does (14, not 15, in the 30 px circle).
+*Why:* painting at a fractional position would need a hand-built mesh, and the linear-filtered font
+atlas would blur the icon. The parity holds at scale 1 and 2; fractional scales can stay about 0.5 pt off.
+
 Do NOT use Geist Mono for prose or labels. It is for aligned or literal text only, so the UI keeps
 one voice.
 

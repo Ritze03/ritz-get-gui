@@ -354,7 +354,9 @@ fn gear(ui: &mut Ui, rect: Rect, on: bool) -> egui::Response {
         (if resp.is_pointer_button_down_on() { theme::SELBD } else if resp.hovered() { theme::ACCENT } else { theme::BTNBD }, theme::DIM)
     };
     p.rect_stroke(rect, round, Stroke::new(1.0_f32, border), StrokeKind::Inside);
-    theme::paint_glyph(p, rect.center(), glyph::GEAR, 15.0, col);
+    // 14, not 15: text snaps to whole pixels, and at 15 the gear's 15 px box can't centre in the
+    // even 30 px circle (it sat 0.5 px right, 0.7 px down). At 14 the box is even, so it fits.
+    theme::paint_glyph(p, rect.center(), glyph::GEAR, 14.0, col);
     resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Settings")
 }
 
