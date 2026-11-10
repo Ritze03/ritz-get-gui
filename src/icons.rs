@@ -122,8 +122,8 @@ pub fn cache_dir() -> PathBuf {
 }
 
 // ---- sha sidecar ------------------------------------------------------------------------------
-// `<cache>.sha` holds the latest sha the icon was fetched for; `!<sha>` = a failed fetch (404/network)
-// at that sha, so we don't hammer the network every launch until the sha changes.
+// `<cache>.sha` holds the latest sha the icon was fetched for; `!2:<sha>` = a failed fetch (404/network)
+// at that sha (bare `!<sha>` = old format, retried once), so we don't hammer the network every launch until the sha changes.
 
 fn sidecar(cache_path: &Path) -> PathBuf {
     cache_path.with_extension("sha")
@@ -134,7 +134,9 @@ fn should_fetch(sidecar: Option<&str>, png_exists: bool, latest_sha: &str) -> bo
     match sidecar.map(str::trim) {
         None => true,
         Some(s) => match s.strip_prefix('!') {
-            Some(failed_at) => failed_at != latest_sha,
+            // `!2:<sha>` = failed after the API fallback existed; a bare `!<sha>` is an old failure
+            // (raw URL only, private repos always 404ed) and gets one retry
+            Some(rest) => rest.strip_prefix("2:").is_none_or(|failed_at| failed_at != latest_sha),
             None => s != latest_sha || !png_exists,
         },
     }
@@ -148,10 +150,83 @@ fn failed() -> &'static Mutex<HashSet<PathBuf>> {
     F.get_or_init(Default::default)
 }
 
-fn fetch(url: &str) -> Option<Vec<u8>> {
-    let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(10))).build().into();
-    let bytes = agent.get(url).call().ok()?.into_body().read_to_vec().ok()?;
+fn agent() -> ureq::Agent {
+    ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(10))).build().into()
+}
+
+fn png_only(bytes: Vec<u8>) -> Option<Vec<u8>> {
     bytes.starts_with(&[0x89, b'P', b'N', b'G']).then_some(bytes)
+}
+
+/// Plain raw URL first (public repos, no credential lookup); on failure the authenticated
+/// GitHub contents API for raw.githubusercontent.com URLs, if a token is available.
+fn fetch(url: &str) -> Option<Vec<u8>> {
+    let agent = agent();
+    if let Some(b) = agent.get(url).call().ok().and_then(|r| r.into_body().read_to_vec().ok()).and_then(png_only) {
+        return Some(b);
+    }
+    let api = raw_to_api_url(url)?;
+    let token = github_token()?;
+    let resp = agent
+        .get(&api)
+        .header("Accept", "application/vnd.github.raw")
+        .header("Authorization", format!("Bearer {token}"))
+        .header("User-Agent", "ritz-get-gui")
+        .call()
+        .ok()?;
+    png_only(resp.into_body().read_to_vec().ok()?)
+}
+
+/// `https://raw.githubusercontent.com/OWNER/REPO/REF/PATH` -> the contents-API URL
+/// `https://api.github.com/repos/OWNER/REPO/contents/PATH[?ref=REF]` (no `ref` for `HEAD`).
+/// A branch with a slash is ambiguous in a raw URL; the first segment is taken as the ref.
+fn raw_to_api_url(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("https://raw.githubusercontent.com/")?;
+    let mut it = rest.splitn(4, '/');
+    let (owner, repo, rf, path) = (it.next()?, it.next()?, it.next()?, it.next()?);
+    if [owner, repo, rf, path].iter().any(|p| p.is_empty()) {
+        return None;
+    }
+    let q = if rf == "HEAD" { String::new() } else { format!("?ref={rf}") };
+    Some(format!("https://api.github.com/repos/{owner}/{repo}/contents/{path}{q}"))
+}
+
+/// The user's GitHub token, looked up at most once per process and kept in memory only: the git
+/// credential helpers (`credential fill`, never approve/reject), else `gh auth token`. Never prompts.
+fn github_token() -> Option<&'static str> {
+    static T: OnceLock<Option<String>> = OnceLock::new();
+    T.get_or_init(|| git_credential_token().or_else(gh_token)).as_deref()
+}
+
+fn git_credential_token() -> Option<String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("git")
+        .args(["credential", "fill"])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_ASKPASS", "")
+        .env("SSH_ASKPASS", "")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    child.stdin.take()?.write_all(b"protocol=https\nhost=github.com\n\n").ok()?;
+    let out = child.wait_with_output().ok()?;
+    let text = String::from_utf8(out.stdout).ok()?;
+    let pw = text.lines().find_map(|l| l.strip_prefix("password="))?.trim();
+    (!pw.is_empty()).then(|| pw.to_owned())
+}
+
+fn gh_token() -> Option<String> {
+    let out = std::process::Command::new("gh")
+        .args(["auth", "token"])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    let t = String::from_utf8(out.stdout).ok()?.trim().to_owned();
+    (out.status.success() && !t.is_empty()).then_some(t)
 }
 
 fn fetch_to_cache(url: &str, cache_path: &Path, sha: &str) -> bool {
@@ -171,7 +246,7 @@ fn fetch_to_cache(url: &str, cache_path: &Path, sha: &str) -> bool {
             let _ = std::fs::remove_file(cache_path);
             // website icons have no sha (""): "!" would block every retry forever, so retry next launch
             if !sha.is_empty() {
-                let _ = std::fs::write(sidecar(cache_path), format!("!{sha}"));
+                let _ = std::fs::write(sidecar(cache_path), format!("!2:{sha}"));
             }
             false
         }
@@ -529,8 +604,28 @@ mod tests {
         assert!(!should_fetch(Some("a\n"), true, "a"));
         assert!(should_fetch(Some("a"), true, "b"));
         assert!(should_fetch(Some("a"), false, "a"));
-        assert!(!should_fetch(Some("!a"), false, "a"));
-        assert!(should_fetch(Some("!a"), false, "b"));
+        assert!(!should_fetch(Some("!2:a"), false, "a"));
+        assert!(should_fetch(Some("!2:a"), false, "b"));
+        assert!(should_fetch(Some("!a"), false, "a")); // old-format failure: retry once
+    }
+
+    #[test]
+    fn raw_url_to_api_url() {
+        let raw = "https://raw.githubusercontent.com";
+        assert_eq!(
+            raw_to_api_url(&format!("{raw}/o/r/HEAD/icon.png")).as_deref(),
+            Some("https://api.github.com/repos/o/r/contents/icon.png")
+        );
+        assert_eq!(
+            raw_to_api_url(&format!("{raw}/o/r/dev/icon.png")).as_deref(),
+            Some("https://api.github.com/repos/o/r/contents/icon.png?ref=dev")
+        );
+        assert_eq!(
+            raw_to_api_url(&format!("{raw}/o/ritz-get/HEAD/icons/site.png")).as_deref(),
+            Some("https://api.github.com/repos/o/ritz-get/contents/icons/site.png")
+        );
+        assert_eq!(raw_to_api_url("https://example.com/o/r/HEAD/icon.png"), None);
+        assert_eq!(raw_to_api_url(&format!("{raw}/o/r")), None);
     }
 
     #[test]
