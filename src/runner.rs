@@ -9,7 +9,7 @@
 //! Contract with the rest of the app (this file's public items are the interface; extend, don't
 //! rename):
 //! - argv comes from [`Command::args`] (already includes `--yes`, `--porcelain`, ...), the sudo
-//!   env flag from [`Command::uses_sudo`]; the binary is `$RITZ_GET` or `ritz-get` on `PATH`.
+//!   env flag from [`Command::uses_sudo`]; the binary is `$RITZ_GET`, `ritz-get` on `PATH`, or `$HOME/.local/bin/ritz-get`.
 //! - For [`Command::is_query`] commands no [`RunnerEvent::Line`] is emitted for stdout (it is only
 //!   returned in [`Captured::stdout`]); stderr lines are still streamed.
 //! - If the binary cannot be spawned: one stderr `Line` with the OS error, then
@@ -254,9 +254,26 @@ impl Runner {
         Runner::default()
     }
 
-    /// The binary to run: `$RITZ_GET` if set and non-empty, else `ritz-get` (PATH lookup).
+    /// The binary to run: `$RITZ_GET` if set and non-empty, else `ritz-get` if found on `PATH`,
+    /// else `$HOME/.local/bin/ritz-get` if it exists, else plain `ritz-get` (so a missing binary
+    /// still surfaces the normal spawn error).
+    ///
+    /// Why: some desktop launchers start the app with a `PATH` that omits `$HOME/.local/bin`.
     pub fn binary() -> String {
-        std::env::var("RITZ_GET").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "ritz-get".into())
+        if let Some(s) = std::env::var("RITZ_GET").ok().filter(|s| !s.is_empty()) {
+            return s;
+        }
+        let on_path = std::env::var_os("PATH")
+            .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join("ritz-get").is_file()));
+        if !on_path {
+            if let Some(h) = std::env::var_os("HOME") {
+                let local = std::path::Path::new(&h).join(".local/bin/ritz-get");
+                if local.is_file() {
+                    return local.to_string_lossy().into_owned();
+                }
+            }
+        }
+        "ritz-get".into()
     }
 
     #[cfg(test)]
