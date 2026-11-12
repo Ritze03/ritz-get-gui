@@ -612,7 +612,7 @@ fn groups(state: &AppState, e: &Entry) -> Vec<Vec<Item>> {
         let mut local: Vec<Item> = shortcut.map(|i| Item { enabled: false, action: None, ..i }).into_iter().collect();
         local.push(off(glyph::FOLDER, "Open folder"));
         let mut gh = Vec::new();
-        github_items(e, &mut gh);
+        github_items(e, false, &mut gh);
         // Leftover data of a removed program (an installed one must be removed first).
         let data: Vec<Item> = if e.data.is_empty() {
             Vec::new()
@@ -644,7 +644,9 @@ fn groups(state: &AppState, e: &Entry) -> Vec<Vec<Item>> {
             local.push(free_item(glyph::FOLDER, "Open folder", Action::OpenFolder(dir.join(&e.name).to_string_lossy().into_owned())));
         }
         let mut gh = Vec::new();
-        github_items(e, &mut gh);
+        // ponytail: one is_file() stat per frame; fine because only the selected entry is drawn here.
+        let has_changelog = state.dir.as_ref().is_some_and(|d| d.join(&e.name).join("CHANGELOG.md").is_file());
+        github_items(e, has_changelog, &mut gh);
         vec![life, local, gh]
     };
     let mut groups: Vec<Vec<Item>> = groups.into_iter().filter(|g| !g.is_empty()).collect();
@@ -689,12 +691,16 @@ fn progress_row(cp: &CardProgress, life: &mut Vec<Item>, back: bool) {
     }
 }
 
-/// D23: Open on GitHub / Open README / Report issue (programs with a repo only).
-fn github_items(e: &Entry, out: &mut Vec<Item>) {
+/// D23: Open on GitHub / Open README / Open changelog / Report issue (programs with a repo only).
+/// `has_changelog`: the installed clone holds a CHANGELOG.md (checked locally by the caller).
+fn github_items(e: &Entry, has_changelog: bool, out: &mut Vec<Item>) {
     let Some(repo) = e.repo_url() else { return };
     let branch = e.branch.as_deref().unwrap_or("HEAD");
     out.push(free_item(glyph::GITHUB, "Open on GitHub", Action::OpenUrl(repo.clone())));
     out.push(free_item(glyph::BOOK, "Open README", Action::OpenUrl(format!("{repo}/tree/{branch}#readme"))));
+    if has_changelog {
+        out.push(free_item(glyph::BOOK, "Open changelog", Action::OpenUrl(format!("{repo}/blob/{branch}/CHANGELOG.md"))));
+    }
     out.push(free_item(glyph::BUG, "Report issue", Action::OpenUrl(format!("{repo}/issues/new"))));
 }
 
@@ -899,6 +905,19 @@ mod tests {
         assert_eq!(texts(&g), vec![vec!["Install"], vec!["Open folder"], vec!["Open on GitHub", "Open README", "Report issue"]]);
         let folder = &g[1][0];
         assert!(!folder.enabled && folder.action.is_none());
+    }
+
+    #[test]
+    fn changelog_item_follows_the_flag_and_skips_websites() {
+        let s = st();
+        let mut out = Vec::new();
+        github_items(find(&s, "Software/ForzaTelemetryV3Launcher"), true, &mut out);
+        let item = out.iter().find(|i| i.text == "Open changelog").expect("changelog item");
+        let Some(Action::OpenUrl(u)) = &item.action else { panic!("not a URL") };
+        assert!(u.ends_with("/blob/master/CHANGELOG.md"), "{u}");
+        out.clear();
+        github_items(find(&s, "Websites/cs2-multimap"), true, &mut out);
+        assert!(out.is_empty());
     }
 
     #[test]
