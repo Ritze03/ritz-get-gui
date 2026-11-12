@@ -7,6 +7,11 @@ All notable user-facing changes, newest first. Categories:
 **Removed** (things taken out),
 **Info** (notes worth knowing).
 
+## 2026-11-12
+
+### Added
+- **Open changelog**: programs that have a changelog now offer a link to it.
+
 ## 2026-11-11
 
 ### Fixed
