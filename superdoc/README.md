@@ -43,6 +43,7 @@ packaging:
 ## claude-instructions/ — mandatory rules for agents
 
 - [Working with the Docs](claude-instructions/documentation.md) — read before you touch, update after you change, record the why.
+- [Changelog Maintenance](claude-instructions/changelog.md) — every user-facing change adds a short plain-language dated entry to `CHANGELOG.md`.
 - [Documentation version policy](claude-instructions/documentation-version-policy.md) — date-based, no version numbers.
 
 ## meta/
